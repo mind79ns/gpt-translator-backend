@@ -1,0 +1,18 @@
+{
+  "name": "gpt-translator",
+  "version": "1.0.0",
+  "description": "AI-powered translator with voice recognition and TTS",
+  "main": "index.js",
+  "scripts": {
+    "dev": "netlify dev",
+    "build": "echo 'No build process required'",
+    "deploy": "netlify deploy --prod"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
