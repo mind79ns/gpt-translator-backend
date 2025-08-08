@@ -1,2 +1,2 @@
 [functions]
-directory = "translation-api-netlify/netlify/functions"
+directory = "netlify/functions"
