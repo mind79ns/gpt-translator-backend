@@ -84,8 +84,34 @@ Return ONLY the Korean pronunciation, nothing else.`;
   };
 }
 
-
 async function getTTSAudio(textToSpeak, voice) {
+  // 베트남어 감지 및 전처리
+  const vietnameseRegex = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđĐ]/;
+  const isVietnamese = vietnameseRegex.test(textToSpeak);
+  
+  // 베트남어인 경우 특별 처리
+  let processedText = textToSpeak;
+  let selectedVoice = voice;
+  let speed = 1.0;
+  
+  if (isVietnamese) {
+    // 1. 베트남어 텍스트 정규화 (톤 마크 보존)
+    processedText = textToSpeak.normalize('NFC');
+    
+    // 2. 베트남어에 최적화된 음성 선택 (nova가 가장 안정적)
+    if (voice === 'echo' || voice === 'onyx' || voice === 'fable') {
+      selectedVoice = 'nova';  // 여성 음성이 베트남어에 더 안정적
+    }
+    
+    // 3. 속도 조정 (베트남어는 약간 천천히)
+    speed = 0.9;
+    
+    // 4. 베트남어 문장 앞뒤에 구분자 추가 (TTS가 언어를 인식하도록)
+    processedText = `[Vietnamese] ${processedText}`;
+    
+    console.log(`베트남어 TTS 처리: voice=${selectedVoice}, speed=${speed}`);
+  }
+  
   const ttsResponse = await fetch("https://api.openai.com/v1/audio/speech", {
     method: 'POST',
     headers: {
@@ -93,11 +119,11 @@ async function getTTSAudio(textToSpeak, voice) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "tts-1-hd",
-      input: textToSpeak,
-      voice: voice,
+      model: "tts-1-hd",  // HD 모델 사용
+      input: processedText,
+      voice: selectedVoice,
       response_format: 'mp3',
-      speed: 1.0  // 속도 정상화
+      speed: speed
     })
   });
 
@@ -109,6 +135,7 @@ async function getTTSAudio(textToSpeak, voice) {
   const audioBuffer = await ttsResponse.arrayBuffer();
   return Buffer.from(audioBuffer);
 }
+
 
 exports.handler = async function(event, context) {
   const commonHeaders = {
@@ -143,18 +170,23 @@ exports.handler = async function(event, context) {
         body: JSON.stringify(result),
       };
 
-    } else if (action === 'speak') {
-      if (!inputText || !voice) {
-        return { statusCode: 400, headers: {...commonHeaders, 'Content-Type': 'application/json'}, body: JSON.stringify({ error: "inputText와 voice가 필요합니다." }) };
-      }
-      const audioBuffer = await getTTSAudio(inputText, voice);
-      
-      return {
-        statusCode: 200,
-        headers: { ...commonHeaders, 'Content-Type': 'audio/mpeg' },
-        isBase64Encoded: true,
-        body: audioBuffer.toString('base64'),
-      };
+  } else if (action === 'speak') {
+  if (!inputText || !voice) {
+    return { statusCode: 400, headers: {...commonHeaders, 'Content-Type': 'application/json'}, body: JSON.stringify({ error: "inputText와 voice가 필요합니다." }) };
+  }
+  
+  // 언어 정보도 함께 전달받기 (프론트엔드에서)
+  const { language } = JSON.parse(event.body || '{}');
+  
+  // TTS 생성 시 언어 정보 활용
+  const audioBuffer = await getTTSAudio(inputText, voice, language);
+  
+  return {
+    statusCode: 200,
+    headers: { ...commonHeaders, 'Content-Type': 'audio/mpeg' },
+    isBase64Encoded: true,
+    body: audioBuffer.toString('base64'),
+  };
 
     } else {
       return { statusCode: 400, headers: {...commonHeaders, 'Content-Type': 'application/json'}, body: JSON.stringify({ error: `알 수 없는 action: '${action}'` }) };
