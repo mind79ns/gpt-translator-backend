@@ -122,9 +122,6 @@ if (isVietnamese) {
       'onyx': { model: 'tts-1', speed: 0.85 }      
     };
     
-    // 이것만으로는 불충분
-    processedText = processedText.replace(/đ/g, 'd').replace(/Đ/g, 'D');
-
     // 베트남어 문자 최소 변환 (안정성을 위해 đ만 변환)
     processedText = processedText.replace(/đ/g, 'd').replace(/Đ/g, 'D');
     
