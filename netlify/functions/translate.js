@@ -82,14 +82,14 @@ async function getTTSAudio(textToSpeak, voice, language) {
   const isVietnamese = language === 'Vietnamese' || vietnameseRegex.test(textToSpeak);
   
   let processedText = textToSpeak;
-  let selectedVoice = voice;  // 사용자 선택 음성 유지
+  let selectedVoice = voice;
   let selectedModel = "tts-1-hd";
   let speed = 1.0;
   
-if (isVietnamese) {
-    console.log("베트남어 TTS 처리 - 선택된 음성:", voice);
+  if (isVietnamese) {
+    console.log("베트남어 TTS 특별 처리 시작");
     
-    // 베트남어 텍스트를 영어식 발음으로 변환 (안정성 향상) - 이 부분 추가!
+    // 베트남어 텍스트를 영어식 발음으로 변환 (안정성 향상)
     const vietnameseMap = {
       'ă': 'a', 'â': 'a', 'đ': 'd', 'ê': 'e', 'ô': 'o', 'ơ': 'o', 'ư': 'u',
       'Ă': 'A', 'Â': 'A', 'Đ': 'D', 'Ê': 'E', 'Ô': 'O', 'Ơ': 'O', 'Ư': 'U',
@@ -112,46 +112,12 @@ if (isVietnamese) {
       processedText = processedText.replace(new RegExp(viet, 'g'), eng);
     }
     
-    // 음성별 최적화 설정
-    const voiceSettings = {
-      'nova': { model: 'tts-1', speed: 0.9 },      
-      'shimmer': { model: 'tts-1', speed: 0.9 },   
-      'alloy': { model: 'tts-1', speed: 0.95 },    
-      'echo': { model: 'tts-1-hd', speed: 0.9 },   
-      'fable': { model: 'tts-1', speed: 0.95 },    
-      'onyx': { model: 'tts-1', speed: 0.85 }      
-    };
+    // 베트남어에 최적화된 설정
+    selectedVoice = 'nova';  // nova가 가장 안정적
+    selectedModel = 'tts-1';  // HD 대신 일반 모델 (더 안정적)
+    speed = 0.9;  // 속도 조금 느리게
     
-    // 베트남어 문자 최소 변환 (안정성을 위해 đ만 변환)
-    processedText = processedText.replace(/đ/g, 'd').replace(/Đ/g, 'D');
-    
-    // 음성별 최적화 설정
-    const voiceSettings = {
-      'nova': { model: 'tts-1', speed: 0.9 },      // 여성, 가장 안정적
-      'shimmer': { model: 'tts-1', speed: 0.9 },   // 여성, 부드러움
-      'alloy': { model: 'tts-1', speed: 0.95 },    // 남성, 차분함
-      'echo': { model: 'tts-1-hd', speed: 0.9 },   // 남성, HD
-      'fable': { model: 'tts-1', speed: 0.95 },    // 남성, 표현력
-      'onyx': { model: 'tts-1', speed: 0.85 }      // 남성, 저음
-    };
-    
-    // 선택된 음성에 따른 설정 적용
-    if (voiceSettings[voice]) {
-      selectedModel = voiceSettings[voice].model;
-      speed = voiceSettings[voice].speed;
-    } else {
-      // 기본값
-      selectedModel = 'tts-1';
-      speed = 0.9;
-    }
-    
-    // 언어 힌트 추가 (음성 인식 개선)
-    processedText = `[Vietnamese language, ${voice} voice] ${processedText}`;
-    
-  } else if (language === 'Korean') {
-    // 한국어 최적화
-    speed = 0.95;
-    selectedModel = 'tts-1-hd';
+    console.log(`베트남어 변환: "${textToSpeak.substring(0, 30)}..." -> "${processedText.substring(0, 30)}..."`);
   }
   
   // TTS 요청 (재시도 로직)
@@ -171,7 +137,7 @@ if (isVietnamese) {
         body: JSON.stringify({
           model: selectedModel,
           input: processedText,
-          voice: selectedVoice,  // 사용자가 선택한 음성 사용
+          voice: selectedVoice,
           response_format: 'mp3',
           speed: speed
         })
@@ -183,7 +149,7 @@ if (isVietnamese) {
 
       const buffer = await ttsResponse.arrayBuffer();
       audioBuffer = buffer;
-      console.log(`TTS 성공 (시도 ${attempts}): ${buffer.byteLength} bytes, 음성: ${selectedVoice}`);
+      console.log(`TTS 성공 (시도 ${attempts}): ${buffer.byteLength} bytes`);
       
     } catch (error) {
       console.error(`TTS 시도 ${attempts} 실패:`, error);
