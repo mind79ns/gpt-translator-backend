@@ -82,12 +82,12 @@ async function getTTSAudio(textToSpeak, voice, language) {
   const isVietnamese = language === 'Vietnamese' || vietnameseRegex.test(textToSpeak);
   
   let processedText = textToSpeak;
-  let selectedVoice = voice;
+  let selectedVoice = voice;  // 사용자 선택 유지!
   let selectedModel = "tts-1-hd";
   let speed = 1.0;
   
   if (isVietnamese) {
-    console.log("베트남어 TTS 특별 처리 시작");
+    console.log("베트남어 TTS 처리 - 사용자 선택 음성:", voice);
     
     // 베트남어 텍스트를 영어식 발음으로 변환 (안정성 향상)
     const vietnameseMap = {
@@ -112,12 +112,14 @@ async function getTTSAudio(textToSpeak, voice, language) {
       processedText = processedText.replace(new RegExp(viet, 'g'), eng);
     }
     
-    // 베트남어에 최적화된 설정
-    selectedVoice = 'nova';  // nova가 가장 안정적
-    selectedModel = 'tts-1';  // HD 대신 일반 모델 (더 안정적)
-    speed = 0.9;  // 속도 조금 느리게
+    // ⭐ 중요: nova 강제 고정 제거! 사용자 선택 음성 사용
+    // selectedVoice = 'nova';  // ❌ 이 줄 삭제!
     
-    console.log(`베트남어 변환: "${textToSpeak.substring(0, 30)}..." -> "${processedText.substring(0, 30)}..."`);
+    // 베트남어 최적 설정 (음성은 사용자 선택 유지)
+    selectedModel = 'tts-1';  // 일반 모델이 더 안정적
+    speed = 0.95;  // 약간만 느리게
+    
+    console.log(`베트남어 TTS: voice=${selectedVoice}, model=${selectedModel}, speed=${speed}`);
   }
   
   // TTS 요청 (재시도 로직)
@@ -137,7 +139,7 @@ async function getTTSAudio(textToSpeak, voice, language) {
         body: JSON.stringify({
           model: selectedModel,
           input: processedText,
-          voice: selectedVoice,
+          voice: selectedVoice,  // 사용자 선택 음성 사용
           response_format: 'mp3',
           speed: speed
         })
@@ -149,7 +151,7 @@ async function getTTSAudio(textToSpeak, voice, language) {
 
       const buffer = await ttsResponse.arrayBuffer();
       audioBuffer = buffer;
-      console.log(`TTS 성공 (시도 ${attempts}): ${buffer.byteLength} bytes`);
+      console.log(`TTS 성공 (시도 ${attempts}): ${buffer.byteLength} bytes, 음성: ${selectedVoice}`);
       
     } catch (error) {
       console.error(`TTS 시도 ${attempts} 실패:`, error);
