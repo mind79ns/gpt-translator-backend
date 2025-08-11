@@ -76,31 +76,52 @@ Return ONLY the Korean pronunciation, nothing else.`;
   };
 }
 
-// ⭐ 수정된 getTTSAudio 함수 (베트남어 볼륨 증폭)
 async function getTTSAudio(textToSpeak, voice, language) {
   // 베트남어 감지
   const vietnameseRegex = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđĐ]/;
   const isVietnamese = language === 'Vietnamese' || vietnameseRegex.test(textToSpeak);
   
   let processedText = textToSpeak;
-  let selectedVoice = voice; // ⭐ 사용자 선택 음성 유지 (nova 강제 제거)
+  let selectedVoice = voice;  // 사용자 선택 유지!
   let selectedModel = "tts-1-hd";
   let speed = 1.0;
   
   if (isVietnamese) {
-    console.log("베트남어 TTS 최적화 처리");
+    console.log("베트남어 TTS 처리 - 사용자 선택 음성:", voice);
     
-    // ⭐ 핵심 개선: SSML로 볼륨 강력 증폭 (문자 변환 제거로 품질 향상)
-    processedText = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="vi-VN">
-      <prosody volume="+20dB" rate="0.9" pitch="+2%">
-        ${textToSpeak}
-      </prosody>
-    </speak>`;
+    // 베트남어 텍스트를 영어식 발음으로 변환 (안정성 향상)
+    const vietnameseMap = {
+      'ă': 'a', 'â': 'a', 'đ': 'd', 'ê': 'e', 'ô': 'o', 'ơ': 'o', 'ư': 'u',
+      'Ă': 'A', 'Â': 'A', 'Đ': 'D', 'Ê': 'E', 'Ô': 'O', 'Ơ': 'O', 'Ư': 'U',
+      'à': 'a', 'á': 'a', 'ạ': 'a', 'ả': 'a', 'ã': 'a',
+      'ầ': 'a', 'ấ': 'a', 'ậ': 'a', 'ẩ': 'a', 'ẫ': 'a',
+      'ằ': 'a', 'ắ': 'a', 'ặ': 'a', 'ẳ': 'a', 'ẵ': 'a',
+      'è': 'e', 'é': 'e', 'ẹ': 'e', 'ẻ': 'e', 'ẽ': 'e',
+      'ề': 'e', 'ế': 'e', 'ệ': 'e', 'ể': 'e', 'ễ': 'e',
+      'ì': 'i', 'í': 'i', 'ị': 'i', 'ỉ': 'i', 'ĩ': 'i',
+      'ò': 'o', 'ó': 'o', 'ọ': 'o', 'ỏ': 'o', 'õ': 'o',
+      'ồ': 'o', 'ố': 'o', 'ộ': 'o', 'ổ': 'o', 'ỗ': 'o',
+      'ờ': 'o', 'ớ': 'o', 'ợ': 'o', 'ở': 'o', 'ỡ': 'o',
+      'ù': 'u', 'ú': 'u', 'ụ': 'u', 'ủ': 'u', 'ũ': 'u',
+      'ừ': 'u', 'ứ': 'u', 'ự': 'u', 'ử': 'u', 'ữ': 'u',
+      'ỳ': 'y', 'ý': 'y', 'ỵ': 'y', 'ỷ': 'y', 'ỹ': 'y'
+    };
     
-    selectedModel = 'tts-1-hd'; // 고품질 모델
-    speed = 0.9; // 조금 느리게 (명확한 발음)
+    // 베트남어 문자를 영어식으로 변환
+    for (const [viet, eng] of Object.entries(vietnameseMap)) {
+      processedText = processedText.replace(new RegExp(viet, 'g'), eng);
+    }
     
-    console.log(`베트남어 SSML 적용: +20dB 볼륨 증폭`);
+    // ⭐ 중요: nova 강제 고정 제거! 사용자 선택 음성 사용
+    // selectedVoice = 'nova';  // ❌ 이 줄 삭제!
+    
+    // 베트남어 최적 설정 (음성은 사용자 선택 유지)
+    processedText = `${processedText}. ${processedText}`;  // 텍스트 2번 반복으로 볼륨 효과
+
+selectedModel = 'tts-1-hd';  // ⭐ HD 모델로 변경 (더 큰 소리)
+speed = 0.9;  // 조금 느리게 (더 명확한 발음)
+    
+    console.log(`베트남어 TTS: voice=${selectedVoice}, model=${selectedModel}, speed=${speed}`);
   }
   
   // TTS 요청 (재시도 로직)
@@ -120,7 +141,7 @@ async function getTTSAudio(textToSpeak, voice, language) {
         body: JSON.stringify({
           model: selectedModel,
           input: processedText,
-          voice: selectedVoice, // ⭐ 사용자 선택 음성 사용
+          voice: selectedVoice,  // 사용자 선택 음성 사용
           response_format: 'mp3',
           speed: speed
         })
@@ -132,7 +153,7 @@ async function getTTSAudio(textToSpeak, voice, language) {
 
       const buffer = await ttsResponse.arrayBuffer();
       audioBuffer = buffer;
-      console.log(`TTS 성공 (시도 ${attempts}): ${buffer.byteLength} bytes`);
+      console.log(`TTS 성공 (시도 ${attempts}): ${buffer.byteLength} bytes, 음성: ${selectedVoice}`);
       
     } catch (error) {
       console.error(`TTS 시도 ${attempts} 실패:`, error);
