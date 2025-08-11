@@ -1,175 +1,172 @@
-const fetch = require('node-fetch');
+// translate.js (Netlify function) - 통합/최적화 버전
+// 특징:
+// - 번역 + 한글발음(한글 표기) 단일 호출 (JSON 출력)
+// - temperature=0 으로 결정성 보장
+// - 간단한 메모리 캐시, 입력 길이 보호, 재시도(Backoff)
+// - TTS는 서버에서 생성(폴백). 권장: 브라우저 Web Speech API 사용 (클라이언트에서 처리)
 
-const API_KEY = process.env.OPENAI_API_KEY;
+let fetchFn = globalThis.fetch;
+try {
+  // node runtime에서 global fetch가 없을 경우 node-fetch 사용
+  if (!fetchFn) fetchFn = require('node-fetch');
+} catch (e) {
+  // ignore
+  fetchFn = globalThis.fetch || null;
+}
+
+const API_KEY = process.env.OPENAI_API_KEY || '';
+const MAX_INPUT_CHARS = 6000; // 보호 임계값
+const TRANSLATION_CACHE_TTL_MS = 1000 * 60 * 60; // 1시간
+
+const translationCache = new Map();
+
+function setCache(key, value) {
+  translationCache.set(key, { ts: Date.now(), value });
+}
+function getCache(key) {
+  const entry = translationCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > TRANSLATION_CACHE_TTL_MS) {
+    translationCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
 
 function detectSourceLanguage(text) {
   const koreanRegex = /[가-힣]/;
-  const vietnameseRegex = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i;
-  
+  const vietnameseRegex = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđĐ]/i;
   if (koreanRegex.test(text)) return "Korean";
   if (vietnameseRegex.test(text)) return "Vietnamese";
   return "English";
 }
 
-async function getTranslationAndPronunciation(inputText, targetLang) {
-  const sourceLanguage = detectSourceLanguage(inputText);
-  
-  // Step 1: 먼저 번역만 수행
-  const translatePrompt = `Translate this ${sourceLanguage} text to ${targetLang}: "${inputText}"
-Return ONLY the translation, nothing else.`;
-
-  const translateResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      messages: [{ role: "user", content: translatePrompt }],
-      temperature: 0.1
-    })
-  });
-
-  if (!translateResponse.ok) {
-    throw new Error(`번역 API 오류`);
+async function retryWithBackoff(fn, attempts = 3, baseDelay = 300) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const jitter = Math.random() * 200;
+      const delay = baseDelay * Math.pow(2, i) + jitter;
+      await new Promise(res => setTimeout(res, delay));
+    }
   }
+  throw lastErr;
+}
 
-  const translateData = await translateResponse.json();
-  const translation = translateData.choices[0].message.content.trim();
+// 번역 + 한글발음(한글표기) 단일 호출
+async function translateAndPronounceSingleCall(inputText, targetLang) {
+  if (!API_KEY) throw new Error("서버 오류: OPENAI_API_KEY가 설정되어 있지 않습니다.");
+  if (!inputText || inputText.trim().length === 0) throw new Error("입력 텍스트가 비어있습니다.");
+  if (inputText.length > MAX_INPUT_CHARS) throw new Error(`입력 길이 초과 (최대 ${MAX_INPUT_CHARS}자)`);
 
-  // Step 2: 번역된 텍스트의 한글 발음 생성
-  let pronunciation = "";
-  
-  if (targetLang === "Korean") {
-    pronunciation = translation;
-  } else {
-    const pronPrompt = `Write the Korean pronunciation (한글 표기) for this ${targetLang} text: "${translation}"
-Examples:
-- "Xin chào" → "씬 짜오"
-- "Hello" → "헬로"
-- "Thank you" → "땡큐"
-Return ONLY the Korean pronunciation, nothing else.`;
+  const cacheKey = `tr:${targetLang}:${inputText}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
 
-    const pronResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+  const sourceLanguage = detectSourceLanguage(inputText);
+
+  const systemMessage = `
+You are a professional, consistent translator. ALWAYS return only valid JSON (no extra commentary).
+The JSON MUST contain two keys: "translation" (string), "pronunciation_hangul" (string).
+Rules:
+- Translate the given ${sourceLanguage} text to ${targetLang}.
+- Preserve named entities, product codes, and email/URLs as-is.
+- Maintain formality: if the input is formal, use formal polite tone; otherwise neutral.
+- Keep translation concise and natural.
+- Provide "pronunciation_hangul" as a Korean-readable transcription of the translated ${targetLang} text (for Vietnamese: 한글 표기).
+- Return only JSON (no markdown, no explanation).
+`;
+
+  const userPrompt = `Text: """${inputText}"""`;
+
+  const payload = {
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: systemMessage },
+      { role: "user", content: userPrompt }
+    ],
+    temperature: 0.0,
+    max_tokens: 1500
+  };
+
+  const parsed = await retryWithBackoff(async () => {
+    const resp = await fetchFn("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${API_KEY}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: pronPrompt }],
-        temperature: 0.1
-      })
+      body: JSON.stringify(payload)
     });
 
-    if (pronResponse.ok) {
-      const pronData = await pronResponse.json();
-      pronunciation = pronData.choices[0].message.content.trim();
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`번역 API 오류 ${resp.status}: ${txt}`);
     }
-  }
+    const data = await resp.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) throw new Error("번역 응답 없음");
 
-  return {
-    translation: translation,
-    pronunciation: pronunciation || "발음 정보 없음"
-  };
-}
-
-async function getTTSAudio(textToSpeak, voice, language) {
-  // 베트남어 감지
-  const vietnameseRegex = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđĐ]/;
-  const isVietnamese = language === 'Vietnamese' || vietnameseRegex.test(textToSpeak);
-  
-  let processedText = textToSpeak;
-  let selectedVoice = voice;  // 사용자 선택 유지!
-  let selectedModel = "tts-1-hd";
-  let speed = 1.0;
-  
-  if (isVietnamese) {
-    console.log("베트남어 TTS 처리 - 사용자 선택 음성:", voice);
-    
-    // 베트남어 텍스트를 영어식 발음으로 변환 (안정성 향상)
-    const vietnameseMap = {
-      'ă': 'a', 'â': 'a', 'đ': 'd', 'ê': 'e', 'ô': 'o', 'ơ': 'o', 'ư': 'u',
-      'Ă': 'A', 'Â': 'A', 'Đ': 'D', 'Ê': 'E', 'Ô': 'O', 'Ơ': 'O', 'Ư': 'U',
-      'à': 'a', 'á': 'a', 'ạ': 'a', 'ả': 'a', 'ã': 'a',
-      'ầ': 'a', 'ấ': 'a', 'ậ': 'a', 'ẩ': 'a', 'ẫ': 'a',
-      'ằ': 'a', 'ắ': 'a', 'ặ': 'a', 'ẳ': 'a', 'ẵ': 'a',
-      'è': 'e', 'é': 'e', 'ẹ': 'e', 'ẻ': 'e', 'ẽ': 'e',
-      'ề': 'e', 'ế': 'e', 'ệ': 'e', 'ể': 'e', 'ễ': 'e',
-      'ì': 'i', 'í': 'i', 'ị': 'i', 'ỉ': 'i', 'ĩ': 'i',
-      'ò': 'o', 'ó': 'o', 'ọ': 'o', 'ỏ': 'o', 'õ': 'o',
-      'ồ': 'o', 'ố': 'o', 'ộ': 'o', 'ổ': 'o', 'ỗ': 'o',
-      'ờ': 'o', 'ớ': 'o', 'ợ': 'o', 'ở': 'o', 'ỡ': 'o',
-      'ù': 'u', 'ú': 'u', 'ụ': 'u', 'ủ': 'u', 'ũ': 'u',
-      'ừ': 'u', 'ứ': 'u', 'ự': 'u', 'ử': 'u', 'ữ': 'u',
-      'ỳ': 'y', 'ý': 'y', 'ỵ': 'y', 'ỷ': 'y', 'ỹ': 'y'
-    };
-    
-    // 베트남어 문자를 영어식으로 변환
-    for (const [viet, eng] of Object.entries(vietnameseMap)) {
-      processedText = processedText.replace(new RegExp(viet, 'g'), eng);
-    }
-    
-    // ⭐ 중요: nova 강제 고정 제거! 사용자 선택 음성 사용
-    // selectedVoice = 'nova';  // ❌ 이 줄 삭제!
-    
-    // 베트남어 최적 설정 (음성은 사용자 선택 유지)
-    processedText = `${processedText}. ${processedText}`;  // 텍스트 2번 반복으로 볼륨 효과
-
-selectedModel = 'tts-1-hd';  // ⭐ HD 모델로 변경 (더 큰 소리)
-speed = 0.9;  // 조금 느리게 (더 명확한 발음)
-    
-    console.log(`베트남어 TTS: voice=${selectedVoice}, model=${selectedModel}, speed=${speed}`);
-  }
-  
-  // TTS 요청 (재시도 로직)
-  let attempts = 0;
-  let audioBuffer = null;
-  
-  while (attempts < 2 && !audioBuffer) {
-    attempts++;
-    
+    // 모델이 JSON 반환을 위반했을 경우 안전 파싱 시도
     try {
-      const ttsResponse = await fetch("https://api.openai.com/v1/audio/speech", {
-        method: 'POST',
-        headers: {
-          "Authorization": `Bearer ${API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: selectedModel,
-          input: processedText,
-          voice: selectedVoice,  // 사용자 선택 음성 사용
-          response_format: 'mp3',
-          speed: speed
-        })
-      });
-
-      if (!ttsResponse.ok) {
-        throw new Error(`TTS API 오류: ${ttsResponse.status}`);
+      return JSON.parse(content);
+    } catch (e) {
+      const s = content.indexOf('{'), eidx = content.lastIndexOf('}');
+      if (s !== -1 && eidx !== -1) {
+        const maybe = content.substring(s, eidx + 1);
+        return JSON.parse(maybe);
       }
-
-      const buffer = await ttsResponse.arrayBuffer();
-      audioBuffer = buffer;
-      console.log(`TTS 성공 (시도 ${attempts}): ${buffer.byteLength} bytes, 음성: ${selectedVoice}`);
-      
-    } catch (error) {
-      console.error(`TTS 시도 ${attempts} 실패:`, error);
-      if (attempts >= 2) throw error;
-      await new Promise(resolve => setTimeout(resolve, 300));
+      throw new Error("응답을 JSON으로 파싱하지 못했습니다.");
     }
-  }
-  
-  if (!audioBuffer) {
-    throw new Error("TTS 생성 실패");
-  }
-  
-  return Buffer.from(audioBuffer);
+  }, 3, 300);
+
+  // 안전 포맷 보장
+  const safe = {
+    translation: (parsed.translation || parsed.translated_text || "").toString(),
+    pronunciation_hangul: (parsed.pronunciation_hangul || parsed.pronunciation || parsed.pron || "").toString()
+  };
+
+  setCache(cacheKey, safe);
+  return safe;
 }
 
-exports.handler = async function(event, context) {
+// 서버 TTS (fallback) - Netlify에서 호출시 사용
+async function getTTSAudioBuffer(textToSpeak, voice = 'alloy', locale = 'auto') {
+  if (!API_KEY) throw new Error("서버 오류: OPENAI_API_KEY가 설정되어 있지 않습니다.");
+  const trimmed = textToSpeak.length > 3000 ? textToSpeak.slice(0, 3000) : textToSpeak;
+
+  // 단순 보호: 반복/비속어 제거 등은 클라이언트에서 처리 권장
+  const body = {
+    model: 'tts-1-hd',
+    input: trimmed,
+    voice: voice,
+    ...(locale && locale !== 'auto' ? { locale } : {})
+  };
+
+  const arrBuff = await retryWithBackoff(async () => {
+    const resp = await fetchFn("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`TTS 오류 ${resp.status}: ${txt}`);
+    }
+    return await resp.arrayBuffer();
+  }, 3, 400);
+
+  return Buffer.from(arrBuff);
+}
+
+// Netlify handler
+exports.handler = async function (event, context) {
   const commonHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -179,9 +176,8 @@ exports.handler = async function(event, context) {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: commonHeaders, body: '' };
   }
-
   if (event.httpMethod !== "POST") {
-    return { statusCode: 405, headers: {...commonHeaders, 'Content-Type': 'application/json'}, body: JSON.stringify({ error: "Method Not Allowed" }) };
+    return { statusCode: 405, headers: { ...commonHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: "Method Not Allowed" }) };
   }
 
   try {
@@ -193,39 +189,35 @@ exports.handler = async function(event, context) {
 
     if (action === 'translate') {
       if (!inputText || !targetLang) {
-        return { statusCode: 400, headers: {...commonHeaders, 'Content-Type': 'application/json'}, body: JSON.stringify({ error: "inputText와 targetLang가 필요합니다." }) };
+        return { statusCode: 400, headers: { ...commonHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: "inputText와 targetLang가 필요합니다." }) };
       }
-      const result = await getTranslationAndPronunciation(inputText, targetLang);
+      const result = await translateAndPronounceSingleCall(inputText, targetLang);
       return {
         statusCode: 200,
-        headers: {...commonHeaders, 'Content-Type': 'application/json'},
+        headers: { ...commonHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify(result),
       };
 
     } else if (action === 'speak') {
       if (!inputText || !voice) {
-        return { statusCode: 400, headers: {...commonHeaders, 'Content-Type': 'application/json'}, body: JSON.stringify({ error: "inputText와 voice가 필요합니다." }) };
+        return { statusCode: 400, headers: { ...commonHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: "inputText와 voice가 필요합니다." }) };
       }
-      
-      const audioBuffer = await getTTSAudio(inputText, voice, language);
-      
+      const audioBuffer = await getTTSAudioBuffer(inputText, voice, language || 'auto');
       return {
         statusCode: 200,
         headers: { ...commonHeaders, 'Content-Type': 'audio/mpeg' },
         isBase64Encoded: true,
         body: audioBuffer.toString('base64'),
       };
-
     } else {
-      return { statusCode: 400, headers: {...commonHeaders, 'Content-Type': 'application/json'}, body: JSON.stringify({ error: `알 수 없는 action: '${action}'` }) };
+      return { statusCode: 400, headers: { ...commonHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: `알 수 없는 action: '${action}'` }) };
     }
-
   } catch (err) {
     console.error("핸들러 오류 발생:", err);
     return {
       statusCode: 500,
-      headers: {...commonHeaders, 'Content-Type': 'application/json'},
-      body: JSON.stringify({ error: err.message }),
+      headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: err.message || '서버 오류' }),
     };
   }
 };
