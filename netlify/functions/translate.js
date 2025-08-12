@@ -191,12 +191,12 @@ async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = null, spea
         languageCode: languageCode, 
         name: selectedVoice 
       },
-      audioConfig: { 
-        audioEncoding: 'MP3',
-        speakingRate: speakingRate || 1.0,
-        pitch: 0,
-        volumeGainDb: 2.0  // 볼륨 약간 증폭
-      }
+     audioConfig: { 
+  audioEncoding: 'MP3',
+  speakingRate: 1.0,
+  pitch: 0,
+  volumeGainDb: 6.0  // ✅ 6dB 증폭 (기존 2.0 → 6.0)
+}
     };
     
     console.log('[Google TTS] 요청:', { voice: selectedVoice });
