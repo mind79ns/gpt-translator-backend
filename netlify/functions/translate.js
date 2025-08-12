@@ -1,9 +1,9 @@
-// translate.js (Netlify function) - Enhanced with Google TTS
-// 특징:
-// - 한국어/영어: OpenAI TTS-1 (고품질)
-// - 베트남어: Google Cloud TTS (WaveNet/Neural2)
-// - 문장 분할 지원
-// - 스트리밍 최적화
+// translate.js (Netlify function) - Fixed Google TTS Issues
+// 주요 수정사항:
+// 1. fetch 문제 해결
+// 2. base64 디코딩 추가
+// 3. 음성 일관성 보장
+// 4. 에러 로깅 강화
 
 let fetchFn = globalThis.fetch;
 try {
@@ -151,12 +151,17 @@ function splitIntoSentences(text, maxLength = 200) {
   return chunks;
 }
 
-// Google Cloud TTS for Vietnamese
-async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = 'vi-VN-Wavenet-A', speakingRate = 1.0) {
+// 🔥 수정된 Google Cloud TTS - 모든 문제 해결
+async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = null, speakingRate = 1.0) {
+  console.log('[Google TTS] 시작:', { text: text.substring(0, 50), languageCode, voiceName });
+  
   try {
+    // 서비스 계정 확인
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON 환경변수 미설정');
+    }
+    
     const { GoogleAuth } = require('google-auth-library');
-
-    // 서비스 계정 JSON 로드 (환경변수에서)
     const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 
     const auth = new GoogleAuth({
@@ -166,8 +171,26 @@ async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = 'vi-VN-Wav
 
     const client = await auth.getClient();
     const accessToken = await client.getAccessToken();
+    
+    if (!accessToken.token) {
+      throw new Error('Google 액세스 토큰 획득 실패');
+    }
 
-    const response = await fetch(
+    // 베트남어 음성 옵션 개선
+    const vietnameseVoices = [
+      'vi-VN-Neural2-A',  // 여성, 최고 품질
+      'vi-VN-Neural2-D',  // 남성, 최고 품질
+      'vi-VN-Wavenet-A',  // 여성, 고품질
+      'vi-VN-Wavenet-B',  // 남성, 고품질
+    ];
+    
+    // 음성 선택 (voiceName이 없으면 랜덤하게 최고품질 선택)
+    const selectedVoice = voiceName || vietnameseVoices[0];
+    
+    // ✅ fetch 함수 사용 (node-fetch 또는 globalThis.fetch)
+    const fetchFunction = fetchFn || require('node-fetch');
+    
+    const response = await fetchFunction(
       'https://texttospeech.googleapis.com/v1/text:synthesize',
       {
         method: 'POST',
@@ -177,20 +200,44 @@ async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = 'vi-VN-Wav
         },
         body: JSON.stringify({
           input: { text },
-          voice: { languageCode, name: voiceName },
-          audioConfig: { audioEncoding: 'MP3', speakingRate }
+          voice: { 
+            languageCode, 
+            name: selectedVoice 
+          },
+          audioConfig: { 
+            audioEncoding: 'MP3',
+            speakingRate: speakingRate,
+            pitch: 0,
+            volumeGainDb: 0  // 볼륨 정상화
+          }
         })
       }
     );
 
-    const data = await response.json();
-    if (!data.audioContent) {
-      throw new Error('Google TTS 응답에 audioContent 없음: ' + JSON.stringify(data));
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Google TTS API 오류 ${response.status}: ${errorText}`);
     }
-    return data.audioContent; // base64 MP3
+
+    const data = await response.json();
+    
+    if (!data.audioContent) {
+      throw new Error('Google TTS 응답에 audioContent 없음');
+    }
+    
+    // ✅ 중요: base64를 Buffer로 변환
+    const audioBuffer = Buffer.from(data.audioContent, 'base64');
+    
+    console.log('[Google TTS] 성공:', {
+      voice: selectedVoice,
+      audioSize: audioBuffer.length
+    });
+    
+    return audioBuffer;
+    
   } catch (err) {
-    console.error('Google TTS 실패:', err);
-    throw err;
+    console.error('[Google TTS] 실패 상세:', err.message);
+    throw err;  // ❌ OpenAI로 폴백하지 않고 에러 전파
   }
 }
 
@@ -225,7 +272,7 @@ async function getOpenAITTS(text, voice = 'alloy') {
   return Buffer.from(arrBuff);
 }
 
-// Netlify handler
+// Netlify handler - 개선된 버전
 exports.handler = async function (event, context) {
   const commonHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -241,7 +288,7 @@ exports.handler = async function (event, context) {
   }
 
   try {
-    const { action, inputText, targetLang, voice, language, chunkIndex, useGoogleTTS } = JSON.parse(event.body || '{}');
+    const { action, inputText, targetLang, voice, language, chunkIndex, useGoogleTTS, voiceName } = JSON.parse(event.body || '{}');
 
     if (!OPENAI_API_KEY) {
       throw new Error("서버 설정 오류: OPENAI_API_KEY가 없습니다.");
@@ -270,22 +317,37 @@ exports.handler = async function (event, context) {
       
       let audioBuffer;
       
-      // 베트남어이고 Google TTS 사용 플래그가 있으면
-      if (useGoogleTTS || language === 'Vietnamese') {
-        const langCode = language === 'Vietnamese' ? 'vi-VN' : 
-                        language === 'Korean' ? 'ko-KR' : 'en-US';
-        
-        // Google TTS 사용 시도
+      // ✅ 베트남어는 무조건 Google TTS만 사용 (일관성 보장)
+      if (language === 'Vietnamese') {
         try {
-          audioBuffer = await getGoogleTTS(inputText, langCode);
+          console.log('[Speak] 베트남어 Google TTS 사용');
+          audioBuffer = await getGoogleTTS(
+            inputText, 
+            'vi-VN',
+            voiceName || 'vi-VN-Neural2-A',  // 기본값: 최고품질 여성 음성
+            1.0
+          );
         } catch (e) {
-          console.log('Google TTS 실패, OpenAI로 폴백:', e.message);
-          // 폴백: OpenAI TTS
-          audioBuffer = await getOpenAITTS(inputText, voice || 'alloy');
+          // Google TTS 실패시 에러 반환 (OpenAI 폴백 제거)
+          console.error('[Speak] Google TTS 실패:', e.message);
+          return {
+            statusCode: 500,
+            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              error: '베트남어 음성 생성 실패. Google TTS 설정을 확인하세요.',
+              details: e.message 
+            })
+          };
         }
       } else {
         // 한국어/영어는 OpenAI TTS
         audioBuffer = await getOpenAITTS(inputText, voice || 'alloy');
+      }
+      
+      // audioBuffer가 Buffer인지 확인
+      if (!Buffer.isBuffer(audioBuffer)) {
+        console.error('audioBuffer is not a Buffer:', typeof audioBuffer);
+        throw new Error('오디오 버퍼 생성 실패');
       }
       
       return {
@@ -315,11 +377,24 @@ exports.handler = async function (event, context) {
       const chunkText = chunks[idx];
       let audioBuffer;
       
+      // ✅ 베트남어 일관성 보장
       if (language === 'Vietnamese') {
         try {
-          audioBuffer = await getGoogleTTS(chunkText, 'vi-VN');
+          audioBuffer = await getGoogleTTS(
+            chunkText, 
+            'vi-VN',
+            voiceName || 'vi-VN-Neural2-A',
+            1.0
+          );
         } catch (e) {
-          audioBuffer = await getOpenAITTS(chunkText, voice || 'alloy');
+          return {
+            statusCode: 500,
+            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              error: '베트남어 청크 음성 생성 실패',
+              details: e.message 
+            })
+          };
         }
       } else {
         audioBuffer = await getOpenAITTS(chunkText, voice || 'alloy');
@@ -345,7 +420,10 @@ exports.handler = async function (event, context) {
     return {
       statusCode: 500,
       headers: { ...commonHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: err.message || '서버 오류' }),
+      body: JSON.stringify({ 
+        error: err.message || '서버 오류',
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      }),
     };
   }
 };
