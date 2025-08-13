@@ -194,7 +194,7 @@ async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = null, spea
      audioConfig: { 
   audioEncoding: 'MP3',
   speakingRate: 1.0,
-  pitch: 0,
+  pitch: 0.5,
   volumeGainDb: 6.0  // ✅ 6dB 증폭 (기존 2.0 → 6.0)
 }
     };
