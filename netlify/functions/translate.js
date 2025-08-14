@@ -83,7 +83,7 @@ Rules:
   const userPrompt = `Text: """${inputText}"""`;
 
   const payload = {
-    model: "gpt-4o",
+    model: "gpt-5",
     messages: [
       { role: "system", content: systemMessage },
       { role: "user", content: userPrompt }
