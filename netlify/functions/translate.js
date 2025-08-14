@@ -1,32 +1,3 @@
-
-// === API Key Management ===
-function getOpenAIKey() {
-    return localStorage.getItem('openai_api_key') || '';
-}
-function getGoogleKey() {
-    return localStorage.getItem('google_service_account') || '';
-}
-function ensureKeys() {
-    if (!getOpenAIKey() || !getGoogleKey()) {
-        document.getElementById('apiKeyModal').style.display = 'block';
-    }
-}
-document.addEventListener("DOMContentLoaded", function() {
-    ensureKeys();
-    document.getElementById('saveKeysBtn').addEventListener('click', function() {
-        const openaiKey = document.getElementById('openaiKey').value.trim();
-        const googleKey = document.getElementById('googleKey').value.trim();
-        if (!openaiKey || !googleKey) {
-            alert('두 키 모두 입력해주세요.');
-            return;
-        }
-        localStorage.setItem('openai_api_key', openaiKey);
-        localStorage.setItem('google_service_account', googleKey);
-        document.getElementById('apiKeyModal').style.display = 'none';
-        alert('API 키가 저장되었습니다.');
-    });
-});
-
 // translate.js (Netlify function) - Fixed Google TTS Issues
 // 주요 수정사항:
 // 1. fetch 문제 해결
@@ -41,7 +12,7 @@ try {
   fetchFn = globalThis.fetch || null;
 }
 
-const OPENAI_API_KEY = getOpenAIKey() || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const GOOGLE_TTS_API_KEY = process.env.GOOGLE_TTS_API_KEY || '';
 const MAX_INPUT_CHARS = 6000;
 const TRANSLATION_CACHE_TTL_MS = 1000 * 60 * 60;
