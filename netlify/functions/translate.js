@@ -82,27 +82,15 @@ Rules:
 
   const userPrompt = `Text: """${inputText}"""`;
 
- const MODEL = process.env.OPENAI_MODEL || "gpt-5";
-
-const basePayload = {
-  model: MODEL,
+ const payload = {
+  model: "gpt-4o",
   messages: [
     { role: "system", content: systemMessage },
-    { role: "user",   content: userPrompt }
-  ]
+    { role: "user", content: userPrompt }
+  ],
+  temperature: 0.0,
+  max_tokens: 1500
 };
-
-// GPT-5 계열: max_completion_tokens 사용, temperature는 생략(또는 1 고정)
-if (MODEL.startsWith("gpt-5")) {
-  basePayload.max_completion_tokens = 1500;
-  // basePayload.temperature = 1; // 필요하면 명시
-} else {
-  // GPT-4o 등 구형: max_tokens + temperature 허용
-  basePayload.max_tokens = 1500;
-  basePayload.temperature = 0.0;
-}
-
-const payload = basePayload;
 
   const parsed = await retryWithBackoff(async () => {
     const resp = await fetchFn("https://api.openai.com/v1/chat/completions", {
