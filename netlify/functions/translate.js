@@ -89,7 +89,7 @@ Rules:
       { role: "user", content: userPrompt }
     ],
     temperature: 0.0,
-    max_tokens: 1500
+    max_completion_tokens: 1500 // ✅ 변경
   };
 
   const parsed = await retryWithBackoff(async () => {
