@@ -83,13 +83,13 @@ Rules:
   const userPrompt = `Text: """${inputText}"""`;
 
   const payload = {
-    model: "gpt-5",
+    model: "gpt-4o",
     messages: [
       { role: "system", content: systemMessage },
       { role: "user", content: userPrompt }
     ],
     temperature: 0.0,
-    max_completion_tokens: 1500 // ✅ 변경
+    max_tokens: 1500
   };
 
   const parsed = await retryWithBackoff(async () => {
