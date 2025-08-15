@@ -1,8 +1,9 @@
-// translate.js (Netlify function) - TTS Engine & Voice Selection Fixed
+// translate.js (Netlify function) - AI 문맥 번역 고도화 지원 v6.0
 // 주요 수정사항:
-// 1. 베트남어도 OpenAI TTS 선택 가능하도록 수정
-// 2. Google 음성 선택 문제 해결 (남성/여성 정확히 적용)
-// 3. useGoogleTTS 플래그 정확한 처리
+// 1. AI 문맥 번역 기능 추가 (useAIContext, contextualPrompt, qualityLevel)
+// 2. 전문용어 사전 및 번역 스타일 지원
+// 3. 품질 레벨에 따른 모델 선택 및 설정 조정
+// 4. 기존 기능 완전 호환성 유지
 
 let fetchFn = globalThis.fetch;
 try {
@@ -55,7 +56,121 @@ async function retryWithBackoff(fn, attempts = 3, baseDelay = 300) {
   throw lastErr;
 }
 
-// 번역 + 한글발음 단일 호출
+// 🧠 새로운 AI 문맥 번역 함수
+async function translateWithAIContext(inputText, targetLang, contextualPrompt, qualityLevel = 3, getPronunciation = true) {
+  if (!OPENAI_API_KEY) throw new Error("서버 오류: OPENAI_API_KEY가 설정되어 있지 않습니다.");
+  if (!inputText || inputText.trim().length === 0) throw new Error("입력 텍스트가 비어있습니다.");
+  if (inputText.length > MAX_INPUT_CHARS) throw new Error(`입력 길이 초과 (최대 ${MAX_INPUT_CHARS}자)`);
+
+  const cacheKey = `ai_tr:${targetLang}:${inputText}:${qualityLevel}:${getPronunciation}:${contextualPrompt.substring(0, 100)}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  const sourceLanguage = detectSourceLanguage(inputText);
+
+  // 품질 레벨에 따른 모델 및 설정 선택
+  const qualityConfig = {
+    1: { model: "gpt-4o-mini", temperature: 0.3, maxTokens: 1000 },
+    2: { model: "gpt-4o-mini", temperature: 0.1, maxTokens: 1200 },
+    3: { model: "gpt-4o", temperature: 0.0, maxTokens: 1500 },
+    4: { model: "gpt-4o", temperature: 0.0, maxTokens: 2000 },
+    5: { model: "gpt-4o", temperature: 0.0, maxTokens: 2500 }
+  };
+
+  const config = qualityConfig[qualityLevel] || qualityConfig[3];
+
+  let systemMessage = `
+You are an elite professional translator with deep cultural understanding and linguistic expertise.
+ALWAYS return only valid JSON (no extra commentary, no markdown).
+The JSON MUST contain exactly two keys: "translation" (string), "pronunciation_hangul" (string).
+
+Core Translation Rules:
+- Source language: ${sourceLanguage} → Target language: ${targetLang}
+- Preserve named entities, proper nouns, product codes, and URLs exactly as-is
+- Maintain appropriate formality level based on context
+- Ensure natural, fluent expression in target language`;
+
+  // 품질 레벨에 따른 추가 지침
+  if (qualityLevel >= 4) {
+    systemMessage += `
+- PREMIUM QUALITY: Consider cultural nuances, idiomatic expressions, and regional variations
+- Apply advanced linguistic analysis for context-appropriate translations
+- Ensure perfect grammar and natural flow`;
+  } else if (qualityLevel >= 3) {
+    systemMessage += `
+- HIGH QUALITY: Focus on accuracy and natural expression
+- Consider context and maintain consistency`;
+  }
+
+  if (getPronunciation) {
+    systemMessage += `
+- Provide "pronunciation_hangul" as accurate Korean phonetic transcription of the translated ${targetLang} text
+- For Vietnamese: use Korean characters to represent Vietnamese pronunciation (한글 표기)
+- For English: use Korean characters to represent English pronunciation`;
+  } else {
+    systemMessage += `
+- Set "pronunciation_hangul" to an empty string`;
+  }
+
+  systemMessage += `
+- Output format: Return ONLY valid JSON, no other text`;
+
+  // contextualPrompt를 사용자 메시지로 활용
+  const userPrompt = contextualPrompt || `Translate this ${sourceLanguage} text to ${targetLang}: """${inputText}"""`;
+
+  const payload = {
+    model: config.model,
+    messages: [
+      { role: "system", content: systemMessage },
+      { role: "user", content: userPrompt }
+    ],
+    temperature: config.temperature,
+    max_tokens: config.maxTokens
+  };
+
+  console.log('[AI Translation] 사용 모델:', config.model, '품질 레벨:', qualityLevel);
+
+  const parsed = await retryWithBackoff(async () => {
+    const resp = await fetchFn("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`AI 번역 API 오류 ${resp.status}: ${txt}`);
+    }
+    const data = await resp.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) throw new Error("AI 번역 응답 없음");
+
+    try {
+      return JSON.parse(content);
+    } catch (e) {
+      // JSON 파싱 실패 시 정리 시도
+      const s = content.indexOf('{'), eidx = content.lastIndexOf('}');
+      if (s !== -1 && eidx !== -1) {
+        const maybe = content.substring(s, eidx + 1);
+        return JSON.parse(maybe);
+      }
+      throw new Error("AI 응답을 JSON으로 파싱하지 못했습니다.");
+    }
+  }, 3, 300);
+
+  const safe = {
+    translation: (parsed.translation || parsed.translated_text || "").toString(),
+    pronunciation_hangul: (parsed.pronunciation_hangul || parsed.pronunciation || parsed.pron || "").toString()
+  };
+
+  setCache(cacheKey, safe);
+  return safe;
+}
+
+// 기존 일반 번역 함수 (호환성 유지)
 async function translateAndPronounceSingleCall(inputText, targetLang, getPronunciation = true) {
   if (!OPENAI_API_KEY) throw new Error("서버 오류: OPENAI_API_KEY가 설정되어 있지 않습니다.");
   if (!inputText || inputText.trim().length === 0) throw new Error("입력 텍스트가 비어있습니다.");
@@ -157,7 +272,7 @@ function splitIntoSentences(text, maxLength = 200) {
   return chunks;
 }
 
-// 🔥 수정된 Google Cloud TTS - 음성 선택 문제 해결
+// Google Cloud TTS (기존 그대로)
 async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = null, speakingRate = 1.0) {
   console.log('[Google TTS] 시작:', { 
     text: text.substring(0, 50), 
@@ -188,29 +303,24 @@ async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = null, spea
       return await getOpenAITTS(text, 'nova');
     }
 
-    // ✅ 수정: voiceName을 정확히 사용
     let selectedVoice = voiceName;
     
-    // voiceName이 없거나 잘못된 경우 기본값 설정
     if (!selectedVoice) {
       if (languageCode.startsWith('vi')) {
-        selectedVoice = 'vi-VN-Standard-A'; // 베트남어 기본 여성
+        selectedVoice = 'vi-VN-Standard-A';
       } else if (languageCode.startsWith('ko')) {
-        selectedVoice = 'ko-KR-Standard-A'; // 한국어 기본 여성
+        selectedVoice = 'ko-KR-Standard-A';
       } else {
-        selectedVoice = 'en-US-Standard-C'; // 영어 기본 여성
+        selectedVoice = 'en-US-Standard-C';
       }
     }
     
-    // languageCode와 voiceName의 언어가 일치하는지 확인
-    const voiceLangCode = selectedVoice.substring(0, 5); // 예: vi-VN, ko-KR
+    const voiceLangCode = selectedVoice.substring(0, 5);
     const requestLangCode = languageCode.substring(0, 5);
     
-    // 언어 코드가 일치하지 않으면 조정
     if (voiceLangCode !== requestLangCode) {
       console.log(`[Google TTS] 언어 코드 불일치 감지: voice=${voiceLangCode}, request=${requestLangCode}`);
       
-      // 요청된 언어에 맞는 기본 음성으로 변경
       if (requestLangCode === 'vi-VN') {
         selectedVoice = voiceName?.includes('-B') || voiceName?.includes('-D') ? 'vi-VN-Standard-B' : 'vi-VN-Standard-A';
       } else if (requestLangCode === 'ko-KR') {
@@ -226,17 +336,15 @@ async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = null, spea
       input: { text: text },
       voice: { 
         languageCode: languageCode, 
-        name: selectedVoice // ✅ 사용자가 선택한 음성 정확히 사용
+        name: selectedVoice
       },
       audioConfig: { 
         audioEncoding: 'MP3',
         speakingRate: speakingRate || 1.0,
         pitch: 0.0,
-        volumeGainDb: 10.0  // 볼륨 증폭
+        volumeGainDb: 10.0
       }
     };
-    
-    console.log('[Google TTS] 요청 본문:', JSON.stringify(requestBody, null, 2));
     
     const response = await fetchFunction(
       'https://texttospeech.googleapis.com/v1/text:synthesize',
@@ -274,7 +382,7 @@ async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = null, spea
     return audioBuffer;
     
   } catch (err) {
-    console.error('[Google TTS] 실패:', err.message, err.stack);
+    console.error('[Google TTS] 실패:', err.message);
     try {
       console.log('[Google TTS] OpenAI로 폴백 시도');
       return await getOpenAITTS(text, 'nova');
@@ -316,7 +424,7 @@ async function getOpenAITTS(text, voice = 'alloy') {
   return Buffer.from(arrBuff);
 }
 
-// 🔥 핵심 수정: Netlify handler - TTS 엔진 선택 로직 개선
+// 🚀 메인 핸들러 - AI 문맥 번역 기능 통합
 exports.handler = async function (event, context) {
   const commonHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -341,7 +449,11 @@ exports.handler = async function (event, context) {
       chunkIndex, 
       useGoogleTTS, 
       voiceName,
-      getPronunciation = true 
+      getPronunciation = true,
+      // 🧠 새로운 AI 문맥 번역 파라미터들
+      useAIContext = false,
+      contextualPrompt = null,
+      qualityLevel = 3
     } = JSON.parse(event.body || '{}');
 
     if (!OPENAI_API_KEY) {
@@ -357,11 +469,32 @@ exports.handler = async function (event, context) {
         };
       }
       
-      const result = await translateAndPronounceSingleCall(inputText, targetLang, getPronunciation);
+      let result;
+      
+      // 🧠 AI 문맥 번역 vs 일반 번역 분기
+      if (useAIContext && contextualPrompt) {
+        console.log('[Translation] AI 문맥 번역 모드 사용, 품질 레벨:', qualityLevel);
+        result = await translateWithAIContext(
+          inputText, 
+          targetLang, 
+          contextualPrompt, 
+          qualityLevel, 
+          getPronunciation
+        );
+      } else {
+        console.log('[Translation] 일반 번역 모드 사용');
+        result = await translateAndPronounceSingleCall(inputText, targetLang, getPronunciation);
+      }
       
       // 문장 분할 추가
       const chunks = splitIntoSentences(result.translation);
       result.chunks = chunks;
+      
+      // AI 모드 표시를 위한 플래그 추가
+      if (useAIContext) {
+        result.isAITranslation = true;
+        result.qualityLevel = qualityLevel;
+      }
       
       return {
         statusCode: 200,
@@ -388,13 +521,11 @@ exports.handler = async function (event, context) {
         textLength: inputText.length 
       });
       
-      // 🔥 핵심 수정: useGoogleTTS 플래그를 정확히 처리
-      // 프론트엔드에서 명시적으로 useGoogleTTS를 보내면 그대로 사용
+      // TTS 엔진 선택 로직 (기존 그대로)
       if (useGoogleTTS === true) {
         console.log('[Speak] Google TTS 선택 (명시적)');
         
-        // 언어 코드 매핑
-        let languageCode = 'vi-VN'; // 기본값
+        let languageCode = 'vi-VN';
         if (language === 'Korean') {
           languageCode = 'ko-KR';
         } else if (language === 'English') {
@@ -407,7 +538,7 @@ exports.handler = async function (event, context) {
           audioBuffer = await getGoogleTTS(
             inputText, 
             languageCode,
-            voiceName || null,  // ✅ voiceName 정확히 전달
+            voiceName || null,
             1.0
           );
           console.log('[Speak] Google TTS 성공');
@@ -417,7 +548,6 @@ exports.handler = async function (event, context) {
         }
         
       } else if (useGoogleTTS === false) {
-        // 🔥 명시적으로 OpenAI 선택 (베트남어도 가능)
         console.log('[Speak] OpenAI TTS 선택 (명시적)');
         
         try {
@@ -426,7 +556,6 @@ exports.handler = async function (event, context) {
         } catch (e) {
           console.error('[Speak] OpenAI TTS 실패:', e.message);
           
-          // OpenAI 실패시 Google로 폴백
           let languageCode = 'vi-VN';
           if (language === 'Korean') languageCode = 'ko-KR';
           else if (language === 'English') languageCode = 'en-US';
@@ -440,10 +569,8 @@ exports.handler = async function (event, context) {
         }
         
       } else {
-        // useGoogleTTS가 undefined인 경우 - 자동 선택 (이전 동작 유지)
         console.log('[Speak] TTS 자동 선택 모드');
         
-        // 짧은 텍스트는 Google, 긴 텍스트는 OpenAI
         if (inputText.length < 50) {
           let languageCode = 'vi-VN';
           if (language === 'Korean') languageCode = 'ko-KR';
@@ -455,7 +582,6 @@ exports.handler = async function (event, context) {
         }
       }
       
-      // audioBuffer 검증
       if (!audioBuffer || audioBuffer.length === 0) {
         console.error('오디오 버퍼가 비어있음');
         return {
@@ -465,7 +591,7 @@ exports.handler = async function (event, context) {
         };
       }
       
-      console.log('[Speak] 최종 버퍼 크기:', audioBuffer.length, 'Buffer 타입:', Buffer.isBuffer(audioBuffer));
+      console.log('[Speak] 최종 버퍼 크기:', audioBuffer.length);
       
       return {
         statusCode: 200,
@@ -475,7 +601,6 @@ exports.handler = async function (event, context) {
       };
       
     } else if (action === 'speak-chunk') {
-      // 청크 단위 TTS (스트리밍용)
       if (!inputText) {
         return { 
           statusCode: 400, 
@@ -498,7 +623,6 @@ exports.handler = async function (event, context) {
       const chunkText = chunks[idx];
       let audioBuffer;
       
-      // 청크 모드에서도 useGoogleTTS 플래그 처리
       if (useGoogleTTS === true) {
         let languageCode = 'vi-VN';
         if (language === 'Korean') languageCode = 'ko-KR';
