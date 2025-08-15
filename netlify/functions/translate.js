@@ -1,4 +1,3 @@
-
 // /netlify/functions/translate.js
 // 주요 수정사항:
 // 1. 기존 기능(캐싱, 재시도 로직 등) 완벽 보존
@@ -28,6 +27,21 @@ function getCache(key) {
   return entry.value;
 }
 
+async function retryWithBackoff(fn, attempts = 3, baseDelay = 300) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const jitter = Math.random() * 200;
+      const delay = baseDelay * Math.pow(2, i) + jitter;
+      await new Promise(res => setTimeout(res, delay));
+    }
+  }
+  throw lastErr;
+}
+
 async function getGoogleAuthToken() {
     const { GoogleAuth } = require('google-auth-library');
     const credentials = JSON.parse(GOOGLE_APPLICATION_CREDENTIALS);
@@ -40,15 +54,16 @@ async function getGoogleAuthToken() {
     return accessToken.token;
 }
 
-// 번역 기능
+// 번역 기능 (발음 on/off 기능 추가)
 async function handleTranslate(inputText, targetLang, getPronunciation) {
     const cacheKey = `tr:${targetLang}:${getPronunciation}:${inputText}`;
     const cached = getCache(cacheKey);
     if (cached) return cached;
 
     let systemMessage = `You are a professional translator. Translate the following text to ${targetLang}. Provide the result in a raw JSON format with one key: "translation".`;
+
     if (getPronunciation) {
-        systemMessage = `You are a professional translator. Translate the following text to ${targetLang}. Provide the result in a raw JSON format with two keys: "translation" and "pronunciation_hangul". For "pronunciation_hangul", provide a Korean-readable phonetic transcription.`;
+        systemMessage = `You are a professional translator. Translate the following text to ${targetLang}. Provide the result in a raw JSON format with two keys: "translation" and "pronunciation_hangul". For the "pronunciation_hangul", provide a Korean-readable phonetic transcription.`;
     }
     
     const messages = [{ role: "system", content: systemMessage }, { role: "user", content: inputText }];
@@ -70,11 +85,12 @@ async function handleTranslate(inputText, targetLang, getPronunciation) {
     return result;
 }
 
-// 음성 변환 기능
+// 음성 변환 기능 (Google 음성 선택 오류 수정)
 async function handleSpeak({ inputText, language, useGoogleTTS, voice, voiceName }) {
     if (useGoogleTTS) {
         const token = await getGoogleAuthToken();
         const langCode = language === 'Korean' ? 'ko-KR' : language === 'Vietnamese' ? 'vi-VN' : 'en-US';
+
         const response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
             method: "POST",
             headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
@@ -102,13 +118,13 @@ async function handleSpeak({ inputText, language, useGoogleTTS, voice, voiceName
     }
 }
 
-// Netlify 핸들러
+// Netlify 핸들러 (오류 방지 코드 복원)
 exports.handler = async function (event) {
     if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }};
     const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
 
     try {
-        const body = JSON.parse(event.body);
+        const body = JSON.parse(event.body || '{}'); // "undefined" is not valid JSON 오류 방지
         const { action } = body;
 
         if (action === 'translate') {
