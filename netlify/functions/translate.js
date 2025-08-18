@@ -12,6 +12,15 @@ try {
   fetchFn = globalThis.fetch || null;
 }
 
+// 🔧 추가: 데이터베이스 연결
+const { 
+  verifyToken, 
+  getUserApiKey, 
+  trackUsage, 
+  getPublicCache, 
+  setPublicCache 
+} = require('./database');
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const GOOGLE_TTS_API_KEY = process.env.GOOGLE_TTS_API_KEY || '';
 const MAX_INPUT_CHARS = 6000;
@@ -57,10 +66,22 @@ async function retryWithBackoff(fn, attempts = 3, baseDelay = 300) {
 }
 
 // 🧠 새로운 AI 문맥 번역 함수
-async function translateWithAIContext(inputText, targetLang, contextualPrompt, qualityLevel = 3, getPronunciation = true) {
-  if (!OPENAI_API_KEY) throw new Error("서버 오류: OPENAI_API_KEY가 설정되어 있지 않습니다.");
+async function translateWithAIContext(inputText, targetLang, contextualPrompt, qualityLevel = 3, getPronunciation = true, userApiKey = null) {
+  const apiKey = userApiKey || OPENAI_API_KEY;
+  if (!apiKey) throw new Error("서버 오류: API 키가 설정되어 있지 않습니다.");
   if (!inputText || inputText.trim().length === 0) throw new Error("입력 텍스트가 비어있습니다.");
   if (inputText.length > MAX_INPUT_CHARS) throw new Error(`입력 길이 초과 (최대 ${MAX_INPUT_CHARS}자)`);
+
+  // 🔧 공용 캐시 확인 (AI 모드가 아닌 경우만)
+  if (!contextualPrompt || contextualPrompt.trim() === '') {
+    const publicCache = await getPublicCache(inputText, targetLang);
+    if (publicCache.success) {
+      return {
+        translation: publicCache.data.translation,
+        pronunciation_hangul: publicCache.data.pronunciation || ''
+      };
+    }
+  }
 
   const cacheKey = `ai_tr:${targetLang}:${inputText}:${qualityLevel}:${getPronunciation}:${contextualPrompt.substring(0, 100)}`;
   const cached = getCache(cacheKey);
@@ -131,10 +152,10 @@ Core Translation Rules:
   console.log('[AI Translation] 사용 모델:', config.model, '품질 레벨:', qualityLevel);
 
   const parsed = await retryWithBackoff(async () => {
-    const resp = await fetchFn("https://api.openai.com/v1/chat/completions", {
+   const resp = await fetchFn("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(payload)
@@ -167,12 +188,28 @@ Core Translation Rules:
   };
 
   setCache(cacheKey, safe);
+  
+  // 🔧 공용 캐시에도 저장 (일반 번역인 경우만)
+  if (!contextualPrompt || contextualPrompt.trim() === '') {
+    await setPublicCache(inputText, targetLang, safe.translation, safe.pronunciation_hangul);
+  }
+  
   return safe;
 }
 
 // 기존 일반 번역 함수 (호환성 유지)
-async function translateAndPronounceSingleCall(inputText, targetLang, getPronunciation = true) {
-  if (!OPENAI_API_KEY) throw new Error("서버 오류: OPENAI_API_KEY가 설정되어 있지 않습니다.");
+async function translateAndPronounceSingleCall(inputText, targetLang, getPronunciation = true, userApiKey = null) {
+  const apiKey = userApiKey || OPENAI_API_KEY;
+  if (!apiKey) throw new Error("서버 오류: API 키가 설정되어 있지 않습니다.");
+  
+  // 🔧 공용 캐시 확인
+  const publicCache = await getPublicCache(inputText, targetLang);
+  if (publicCache.success) {
+    return {
+      translation: publicCache.data.translation,
+      pronunciation_hangul: publicCache.data.pronunciation || ''
+    };
+  }
   if (!inputText || inputText.trim().length === 0) throw new Error("입력 텍스트가 비어있습니다.");
   if (inputText.length > MAX_INPUT_CHARS) throw new Error(`입력 길이 초과 (최대 ${MAX_INPUT_CHARS}자)`);
 
@@ -218,7 +255,7 @@ Rules:
     const resp = await fetchFn("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(payload)
@@ -250,6 +287,10 @@ Rules:
   };
 
   setCache(cacheKey, safe);
+  
+  // 🔧 공용 캐시에도 저장
+  await setPublicCache(inputText, targetLang, safe.translation, safe.pronunciation_hangul);
+  
   return safe;
 }
 
@@ -393,11 +434,19 @@ async function getGoogleTTS(text, languageCode = 'vi-VN', voiceName = null, spea
   }
 }
 
-// OpenAI TTS (기존 그대로)
-async function getOpenAITTS(text, voice = 'alloy') {
-  if (!OPENAI_API_KEY) throw new Error("서버 오류: OPENAI_API_KEY가 설정되어 있지 않습니다.");
+// 🔧 개선: OpenAI TTS (API 키 파라미터 강화)
+async function getOpenAITTS(text, voice = 'alloy', apiKey = null) {
+  const ttsApiKey = apiKey || OPENAI_API_KEY;
+  const isUserKey = !!apiKey;
   
-  const trimmed = text.length > 3000 ? text.slice(0, 3000) : text;
+  if (!ttsApiKey) {
+    throw new Error("서버 오류: API 키가 설정되어 있지 않습니다.");
+  }
+  
+  // 텍스트 길이 제한 (OpenAI TTS 최대 4096자)
+  const trimmed = text.length > 4000 ? text.slice(0, 4000) : text;
+  
+  console.log(`[OpenAI TTS] 요청: ${trimmed.length}자, 음성: ${voice}, 키타입: ${isUserKey ? '사용자' : '시스템'}`);
 
   const body = {
     model: 'tts-1-hd',
@@ -409,26 +458,40 @@ async function getOpenAITTS(text, voice = 'alloy') {
     const resp = await fetchFn("https://api.openai.com/v1/audio/speech", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${ttsApiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(body)
     });
+    
     if (!resp.ok) {
       const txt = await resp.text();
-      throw new Error(`TTS 오류 ${resp.status}: ${txt}`);
+      console.error(`[OpenAI TTS] API 오류 ${resp.status}:`, txt);
+      
+      // 사용자 키일 때 더 구체적인 오류 메시지
+      if (isUserKey && resp.status === 401) {
+        throw new Error('사용자 API 키가 유효하지 않습니다. 설정을 확인해주세요.');
+      } else if (resp.status === 429) {
+        throw new Error('API 요청 한도 초과. 잠시 후 다시 시도해주세요.');
+      } else {
+        throw new Error(`TTS 오류 ${resp.status}: ${txt}`);
+      }
     }
+    
     return await resp.arrayBuffer();
   }, 3, 400);
-
-  return Buffer.from(arrBuff);
+  
+  const buffer = Buffer.from(arrBuff);
+  console.log(`[OpenAI TTS] 성공: ${buffer.length}바이트 생성`);
+  
+  return buffer;
 }
 
 // 🚀 메인 핸들러 - AI 문맥 번역 기능 통합
 exports.handler = async function (event, context) {
   const commonHeaders = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'POST, OPTIONS'
   };
 
@@ -440,6 +503,38 @@ exports.handler = async function (event, context) {
   }
 
   try {
+   // 🔧 개선: 사용자 인증 처리
+const authHeader = event.headers.authorization || event.headers.Authorization;
+let userId = null;
+let userApiKeys = { openai: null, google: null };
+
+if (authHeader && authHeader.startsWith('Bearer ')) {
+  const token = authHeader.substring(7);
+  const authResult = await verifyToken(token);
+  
+  if (authResult.success) {
+    userId = authResult.userId;
+    console.log(`[Auth] 사용자 인증 성공: ${userId}`);
+    
+    // 사용자 API 키 병렬 조회로 성능 개선
+    const [openaiKeyResult, googleKeyResult] = await Promise.all([
+      getUserApiKey(userId, 'openai'),
+      getUserApiKey(userId, 'google')
+    ]);
+    
+    userApiKeys = {
+      openai: openaiKeyResult.success ? openaiKeyResult.apiKey : null,
+      google: googleKeyResult.success ? googleKeyResult.apiKey : null
+    };
+    
+    console.log(`[Auth] API 키 로드 완료 - OpenAI: ${!!userApiKeys.openai}, Google: ${!!userApiKeys.google}`);
+  } else {
+    console.log(`[Auth] 토큰 검증 실패: ${authResult.error}`);
+  }
+} else {
+  console.log('[Auth] 인증 헤더 없음 - 게스트 모드');
+}
+    
     const { 
       action, 
       inputText, 
@@ -461,40 +556,81 @@ exports.handler = async function (event, context) {
     }
 
     if (action === 'translate') {
-      if (!inputText || !targetLang) {
-        return { 
-          statusCode: 400, 
-          headers: { ...commonHeaders, 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ error: "inputText와 targetLang가 필요합니다." }) 
-        };
-      }
-      
-      let result;
-      
-      // 🧠 AI 문맥 번역 vs 일반 번역 분기
-      if (useAIContext && contextualPrompt) {
-        console.log('[Translation] AI 문맥 번역 모드 사용, 품질 레벨:', qualityLevel);
-        result = await translateWithAIContext(
-          inputText, 
-          targetLang, 
-          contextualPrompt, 
-          qualityLevel, 
-          getPronunciation
-        );
-      } else {
-        console.log('[Translation] 일반 번역 모드 사용');
-        result = await translateAndPronounceSingleCall(inputText, targetLang, getPronunciation);
-      }
-      
-      // 문장 분할 추가
-      const chunks = splitIntoSentences(result.translation);
-      result.chunks = chunks;
-      
-      // AI 모드 표시를 위한 플래그 추가
-      if (useAIContext) {
-        result.isAITranslation = true;
-        result.qualityLevel = qualityLevel;
-      }
+  if (!inputText || !targetLang) {
+    return { 
+      statusCode: 400, 
+      headers: { ...commonHeaders, 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ error: "inputText와 targetLang이 필요합니다." }) 
+    };
+  }
+  
+  // 🔧 개선: API 키 선택 로직 강화
+  const apiKeyToUse = userApiKeys?.openai || OPENAI_API_KEY;
+  const isUserKey = !!userApiKeys?.openai;
+  
+  if (!apiKeyToUse) {
+    return {
+      statusCode: 500,
+      headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: "API 키가 설정되지 않았습니다." })
+    };
+  }
+  
+  console.log(`[Translation] ${isUserKey ? '사용자' : '시스템'} API 키 사용, 모드: ${useAIContext ? 'AI' : '일반'}`);
+  
+  let result;
+  
+  try {
+    // 🧠 AI 문맥 번역 vs 일반 번역 분기
+    if (useAIContext && contextualPrompt) {
+      console.log('[Translation] AI 문맥 번역 모드, 품질 레벨:', qualityLevel);
+      result = await translateWithAIContext(
+        inputText, 
+        targetLang, 
+        contextualPrompt, 
+        qualityLevel, 
+        getPronunciation,
+        apiKeyToUse
+      );
+    } else {
+      console.log('[Translation] 일반 번역 모드');
+      result = await translateAndPronounceSingleCall(inputText, targetLang, getPronunciation, apiKeyToUse);
+    }
+    
+    // 🔧 개선: 사용량 추적 강화
+    if (userId) {
+      const cost = inputText.length * 0.000015; // OpenAI 요금 계산
+      await trackUsage(userId, 'translation', inputText.length, cost, 'openai');
+      console.log(`[Usage] 사용량 추적: ${inputText.length}자, 비용: $${cost.toFixed(6)}`);
+    }
+    
+    // 문장 분할 추가
+    const chunks = splitIntoSentences(result.translation);
+    result.chunks = chunks;
+    
+    // AI 모드 표시를 위한 플래그 추가
+    if (useAIContext) {
+      result.isAITranslation = true;
+      result.qualityLevel = qualityLevel;
+    }
+    
+    // 🔧 추가: 응답에 사용된 API 키 정보 포함
+    result.usedUserKey = isUserKey;
+    
+    return {
+      statusCode: 200,
+      headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(result),
+    };
+    
+  } catch (error) {
+    console.error('[Translation] 번역 처리 오류:', error);
+    return {
+      statusCode: 500,
+      headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: `번역 실패: ${error.message}` })
+    };
+  }
       
       return {
         statusCode: 200,
@@ -503,102 +639,131 @@ exports.handler = async function (event, context) {
       };
 
     } else if (action === 'speak') {
-      if (!inputText) {
-        return { 
-          statusCode: 400, 
-          headers: { ...commonHeaders, 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ error: "inputText가 필요합니다." }) 
-        };
+  if (!inputText) {
+    return { 
+      statusCode: 400, 
+      headers: { ...commonHeaders, 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ error: "inputText가 필요합니다." }) 
+    };
+  }
+  
+  // 🔧 개선: TTS API 키 선택 로직
+  const ttsApiKey = userApiKeys?.openai || OPENAI_API_KEY;
+  const isUserKey = !!userApiKeys?.openai;
+  
+  let audioBuffer;
+  
+  console.log('[Speak] 요청 받음:', { 
+    language, 
+    voice,
+    voiceName,
+    useGoogleTTS,
+    textLength: inputText.length,
+    usingUserKey: isUserKey
+  });
+  
+  try {
+    // TTS 엔진 선택 로직
+    if (useGoogleTTS === true) {
+      console.log('[Speak] Google TTS 선택 (명시적)');
+      
+      let languageCode = 'vi-VN';
+      if (language === 'Korean') {
+        languageCode = 'ko-KR';
+      } else if (language === 'English') {
+        languageCode = 'en-US';
+      } else if (language === 'Vietnamese') {
+        languageCode = 'vi-VN';
       }
       
-      let audioBuffer;
+      try {
+        audioBuffer = await getGoogleTTS(
+          inputText, 
+          languageCode,
+          voiceName || null,
+          1.0
+        );
+        console.log('[Speak] Google TTS 성공');
+      } catch (e) {
+        console.error('[Speak] Google TTS 실패, OpenAI로 전환:', e.message);
+        audioBuffer = await getOpenAITTS(inputText, voice || 'nova', ttsApiKey);
+      }
       
-      console.log('[Speak] 요청 받음:', { 
-        language, 
-        voice,
-        voiceName,
-        useGoogleTTS,
-        textLength: inputText.length 
-      });
+    } else if (useGoogleTTS === false) {
+      console.log('[Speak] OpenAI TTS 선택 (명시적)');
       
-      // TTS 엔진 선택 로직 (기존 그대로)
-      if (useGoogleTTS === true) {
-        console.log('[Speak] Google TTS 선택 (명시적)');
+      try {
+        audioBuffer = await getOpenAITTS(inputText, voice || 'nova', ttsApiKey);
+        console.log('[Speak] OpenAI TTS 성공');
+        
+        // 🔧 추가: 사용량 추적 (OpenAI TTS 사용 시)
+        if (userId) {
+          const cost = inputText.length * 0.000015;
+          await trackUsage(userId, 'tts', inputText.length, cost, 'openai');
+          console.log(`[Usage] TTS 사용량 추적: ${inputText.length}자, 비용: $${cost.toFixed(6)}`);
+        }
+      } catch (e) {
+        console.error('[Speak] OpenAI TTS 실패:', e.message);
         
         let languageCode = 'vi-VN';
-        if (language === 'Korean') {
-          languageCode = 'ko-KR';
-        } else if (language === 'English') {
-          languageCode = 'en-US';
-        } else if (language === 'Vietnamese') {
-          languageCode = 'vi-VN';
-        }
+        if (language === 'Korean') languageCode = 'ko-KR';
+        else if (language === 'English') languageCode = 'en-US';
         
         try {
-          audioBuffer = await getGoogleTTS(
-            inputText, 
-            languageCode,
-            voiceName || null,
-            1.0
-          );
-          console.log('[Speak] Google TTS 성공');
-        } catch (e) {
-          console.error('[Speak] Google TTS 실패, OpenAI로 전환:', e.message);
-          audioBuffer = await getOpenAITTS(inputText, voice || 'nova');
-        }
-        
-      } else if (useGoogleTTS === false) {
-        console.log('[Speak] OpenAI TTS 선택 (명시적)');
-        
-        try {
-          audioBuffer = await getOpenAITTS(inputText, voice || 'nova');
-          console.log('[Speak] OpenAI TTS 성공');
-        } catch (e) {
-          console.error('[Speak] OpenAI TTS 실패:', e.message);
-          
-          let languageCode = 'vi-VN';
-          if (language === 'Korean') languageCode = 'ko-KR';
-          else if (language === 'English') languageCode = 'en-US';
-          
-          try {
-            audioBuffer = await getGoogleTTS(inputText, languageCode, voiceName, 1.0);
-            console.log('[Speak] Google TTS 폴백 성공');
-          } catch (fallbackErr) {
-            throw new Error('모든 TTS 엔진 실패');
-          }
-        }
-        
-      } else {
-        console.log('[Speak] TTS 자동 선택 모드');
-        
-        if (inputText.length < 50) {
-          let languageCode = 'vi-VN';
-          if (language === 'Korean') languageCode = 'ko-KR';
-          else if (language === 'English') languageCode = 'en-US';
-          
           audioBuffer = await getGoogleTTS(inputText, languageCode, voiceName, 1.0);
-        } else {
-          audioBuffer = await getOpenAITTS(inputText, voice || 'nova');
+          console.log('[Speak] Google TTS 폴백 성공');
+        } catch (fallbackErr) {
+          throw new Error('모든 TTS 엔진 실패');
         }
       }
       
-      if (!audioBuffer || audioBuffer.length === 0) {
-        console.error('오디오 버퍼가 비어있음');
-        return {
-          statusCode: 500,
-          headers: { ...commonHeaders, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ error: '오디오 생성 실패 - 빈 버퍼' })
-        };
+    } else {
+      console.log('[Speak] TTS 자동 선택 모드');
+      
+      if (inputText.length < 50) {
+        let languageCode = 'vi-VN';
+        if (language === 'Korean') languageCode = 'ko-KR';
+        else if (language === 'English') languageCode = 'en-US';
+        
+        audioBuffer = await getGoogleTTS(inputText, languageCode, voiceName, 1.0);
+      } else {
+        audioBuffer = await getOpenAITTS(inputText, voice || 'nova', ttsApiKey);
+        
+        // 🔧 추가: 자동 모드에서 OpenAI 사용 시 사용량 추적
+        if (userId) {
+          const cost = inputText.length * 0.000015;
+          await trackUsage(userId, 'tts', inputText.length, cost, 'openai');
+          console.log(`[Usage] 자동모드 TTS 사용량 추적: ${inputText.length}자, 비용: $${cost.toFixed(6)}`);
+        }
       }
-      
-      console.log('[Speak] 최종 버퍼 크기:', audioBuffer.length);
-      
+    }
+    
+    if (!audioBuffer || audioBuffer.length === 0) {
+      console.error('[Speak] 오디오 버퍼가 비어있음');
       return {
-        statusCode: 200,
-        headers: { ...commonHeaders, 'Content-Type': 'audio/mpeg' },
-        isBase64Encoded: true,
-        body: audioBuffer.toString('base64'),
+        statusCode: 500,
+        headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: '오디오 생성 실패 - 빈 버퍼' })
       };
+    }
+    
+    console.log('[Speak] 최종 버퍼 크기:', audioBuffer.length);
+    
+    return {
+      statusCode: 200,
+      headers: { ...commonHeaders, 'Content-Type': 'audio/mpeg' },
+      isBase64Encoded: true,
+      body: audioBuffer.toString('base64'),
+    };
+    
+  } catch (error) {
+    console.error('[Speak] TTS 처리 오류:', error);
+    return {
+      statusCode: 500,
+      headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: `TTS 실패: ${error.message}` })
+    };
+  }
       
     } else if (action === 'speak-chunk') {
       if (!inputText) {
