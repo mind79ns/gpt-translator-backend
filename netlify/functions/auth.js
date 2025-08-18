@@ -6,7 +6,7 @@ const {
   saveUserApiKey, 
   getUserApiKey,
   supabase
-} = require('../../database');
+} = require('./database');
 
 // CORS 헤더 설정
 const corsHeaders = {
@@ -68,6 +68,9 @@ exports.handler = async function (event, context) {
       
       case 'get-dashboard-data':
         return await handleGetDashboardData(event.headers);
+
+      case 'verify-token':
+        return await handleVerifyToken(event.headers);
 
       default:
         return {
@@ -577,6 +580,40 @@ async function handleDeleteApiKey(headers, provider) {
     };
   }
 }
+
+// 🔐 토큰 검증 처리
+async function handleVerifyToken(headers) {
+  console.log('[Auth] 토큰 검증 요청');
+
+  // 인증 확인
+  const authResult = await verifyAuthToken(headers);
+  
+  if (authResult.success) {
+    console.log(`[Auth] 토큰 검증 성공: ${authResult.email}`);
+    return {
+      statusCode: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: true,
+        user: {
+          id: authResult.userId,
+          email: authResult.email
+        }
+      })
+    };
+  } else {
+    console.log('[Auth] 토큰 검증 실패');
+    return {
+      statusCode: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        error: '토큰이 유효하지 않습니다.'
+      })
+    };
+  }
+}
+
 // 📊 사용량 조회 처리
 async function handleGetUsage(headers) {
   console.log('[Usage] 사용량 조회 요청');
