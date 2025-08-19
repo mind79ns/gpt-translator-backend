@@ -51,8 +51,8 @@ exports.handler = async function (event, context) {
       case 'register':
         return await handleRegister(email, password, displayName);
       
-      case 'login':
-        return await handleLogin(email, password);
+       case 'login':
+        return await handleLogin(event, email, password); // 👈 event 인자 전달
       
       case 'forgot-password':
         return await handleForgotPassword(email);
@@ -225,8 +225,9 @@ async function handleRegister(email, password, displayName) {
 }
 
 // 🔐 로그인 처리 (개선)
-async function handleLogin(email, password) {
+async function handleLogin(event, email, password) { // 👈 event 인자 추가
   console.log(`[Auth] 로그인 시도: ${email}`);
+// ...
 
   // 🔧 개선: 입력값 유효성 검사
   if (!email || !password) {
