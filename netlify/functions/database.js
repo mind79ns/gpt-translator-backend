@@ -5,9 +5,24 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
 // Supabase 클라이언트 초기화
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || '';
+
+// 환경변수 체크
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error('[Database] 필수 환경변수 누락:', {
+    SUPABASE_URL: !!supabaseUrl,
+    SUPABASE_SERVICE_KEY: !!supabaseServiceKey
+  });
+}
+
+const supabase = (supabaseUrl && supabaseServiceKey) 
+  ? createClient(supabaseUrl, supabaseServiceKey)
+  : null;
+
+// JWT 및 암호화 키 체크
+const JWT_SECRET = process.env.JWT_SECRET || 'default-jwt-secret-for-development-only';
+const ENCRYPTION_SECRET = process.env.ENCRYPTION_SECRET || 'default-encryption-secret';
 
 // 암호화/복호화 함수들
 const ENCRYPTION_KEY = crypto.scryptSync(process.env.ENCRYPTION_SECRET || 'default-secret', 'salt', 32);

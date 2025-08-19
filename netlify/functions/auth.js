@@ -14,7 +14,13 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
-
+// 환경변수 체크
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+  console.error('[Auth] 환경변수 누락:', {
+    SUPABASE_URL: !!process.env.SUPABASE_URL,
+    SUPABASE_SERVICE_KEY: !!process.env.SUPABASE_SERVICE_KEY
+  });
+}
 exports.handler = async function (event, context) {
   // 🔧 OPTIONS 요청 처리 (CORS preflight)
   if (event.httpMethod === "OPTIONS") {
@@ -97,6 +103,17 @@ exports.handler = async function (event, context) {
 async function handleRegister(email, password, displayName) {
   console.log(`[Auth] 회원가입 시도: ${email}`);
 
+  // Supabase 연결 체크
+    if (!supabase) {
+        return {
+            statusCode: 503,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                error: '데이터베이스 연결 실패. 관리자에게 문의하세요.' 
+            })
+        };
+    }
+    
   // 🔧 개선: 입력값 유효성 검사 강화
   if (!email || !password) {
     return {
