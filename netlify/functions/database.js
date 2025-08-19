@@ -91,8 +91,14 @@ async function authenticateUser(email, password) {
       .eq('email', email.toLowerCase())
       .single();
 
-    if (error || !user) {
+   if (error || !user) {
       return { success: false, error: '사용자를 찾을 수 없습니다.' };
+    }
+
+    // 🎯 추가: 데이터베이스에서 password_hash가 비어있는 경우를 방지하는 방어 코드
+    if (!user.password_hash) {
+      console.error(`[Auth] Critical: User ${user.email} (ID: ${user.id}) has no password_hash.`);
+      return { success: false, error: '사용자 계정에 문제가 있습니다. 관리자에게 문의하세요.' };
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
