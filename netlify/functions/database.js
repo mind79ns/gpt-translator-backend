@@ -654,12 +654,15 @@ async function saveUserVocabulary(userId, vocabularyData) {
   }
 }
 
-// 사용자 단어장 로드
+// 사용자 단어장 로드 (개선된 버전)
 async function getUserVocabulary(userId) {
   try {
     if (!supabase) {
+      console.error('[Database] Supabase 연결 실패');
       return { success: false, error: '데이터베이스 연결 실패' };
     }
+
+    console.log('[Database] 단어장 로드 시작 - 사용자 ID:', userId);
 
     const { data, error } = await supabase
       .from('user_vocabulary')
@@ -667,29 +670,40 @@ async function getUserVocabulary(userId) {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('[Database] 단어장 조회 오류:', error);
+      throw error;
+    }
+
+    console.log('[Database] 조회된 단어장 데이터:', data);
+    console.log('[Database] 단어장 개수:', data ? data.length : 0);
 
     // 데이터를 Map 형태로 변환
     const vocabularyMap = new Map();
     
     if (data && data.length > 0) {
       data.forEach(row => {
+        console.log('[Database] 단어 처리:', row.original_word);
         vocabularyMap.set(row.original_word, {
           original: row.original_word,
           translation: row.translation,
-          description: row.description,
+          description: row.description || '',
           addedDate: row.created_at,
-          correctCount: row.correct_count,
-          wrongCount: row.wrong_count,
-          practiceTime: row.practice_time,
+          correctCount: row.correct_count || 0,
+          wrongCount: row.wrong_count || 0,
+          practiceTime: row.practice_time || 0,
           lastStudied: row.last_studied
         });
       });
+      
+      console.log('[Database] Map 변환 완료 - 크기:', vocabularyMap.size);
+    } else {
+      console.log('[Database] 단어장 데이터 없음');
     }
 
     return { success: true, vocabulary: vocabularyMap };
   } catch (error) {
-    console.error('사용자 단어장 로드 실패:', error);
+    console.error('[Database] 사용자 단어장 로드 실패:', error);
     return { success: false, error: error.message };
   }
 }
