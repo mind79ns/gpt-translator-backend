@@ -791,4 +791,17 @@ module.exports = {
   setPublicCache,
   encryptApiKey,
   decryptApiKey,
-}
+ // ✨ 단어장 함수들 추가
+  saveUserVocabulary,
+  getUserVocabulary,
+  addUserWord,
+  updateUserWord,
+  deleteUserWord,
+  // ✨ 설정 및 AI 함수들
+  saveUserSettings,
+  getUserSettings,
+  saveUserAISettings,
+  getUserAISettings,
+  saveTranslationHistory,
+  getUserTranslationHistory
+};
