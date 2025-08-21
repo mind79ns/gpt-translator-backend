@@ -1156,7 +1156,7 @@ async function handleSaveTranslationHistory(headers, historyData) {
   }
 }
 
-// 사용자 데이터 전체 로드
+// 사용자 데이터 전체 로드 (안전한 버전)
 async function handleGetUserData(headers) {
   console.log('[Sync] 사용자 데이터 로드 요청');
 
@@ -1170,25 +1170,97 @@ async function handleGetUserData(headers) {
   }
 
   try {
-    // 모든 데이터 병렬 로드
-    const [vocabularyResult, settingsResult, aiSettingsResult, historyResult] = await Promise.all([
-      getUserVocabulary(authResult.userId),
-      getUserSettings(authResult.userId),
-      getUserAISettings(authResult.userId),
-      getUserTranslationHistory(authResult.userId, 50)
-    ]);
+    console.log('[Sync] 함수 존재 확인 시작...');
+    
+    // 함수 존재 확인
+    const functionsExist = {
+      getUserVocabulary: typeof getUserVocabulary === 'function',
+      getUserSettings: typeof getUserSettings === 'function',
+      getUserAISettings: typeof getUserAISettings === 'function',
+      getUserTranslationHistory: typeof getUserTranslationHistory === 'function'
+    };
+    
+    console.log('[Sync] 함수 존재 확인 결과:', functionsExist);
+
+    // 안전한 함수 호출들
+    let vocabularyResult = { success: true, vocabulary: [] };
+    let settingsResult = { success: true, settings: null };
+    let aiSettingsResult = { success: true, aiSettings: null };
+    let historyResult = { success: true, history: [] };
+
+    // 단어장 로드 (안전한 호출)
+    if (functionsExist.getUserVocabulary) {
+      try {
+        vocabularyResult = await getUserVocabulary(authResult.userId);
+        console.log('[Sync] 단어장 로드 결과:', vocabularyResult.success);
+      } catch (error) {
+        console.error('[Sync] 단어장 로드 오류:', error);
+        vocabularyResult = { success: false, error: error.message };
+      }
+    } else {
+      console.warn('[Sync] getUserVocabulary 함수 없음');
+    }
+
+    // 사용자 설정 로드 (안전한 호출)
+    if (functionsExist.getUserSettings) {
+      try {
+        settingsResult = await getUserSettings(authResult.userId);
+        console.log('[Sync] 설정 로드 결과:', settingsResult.success);
+      } catch (error) {
+        console.error('[Sync] 설정 로드 오류:', error);
+        settingsResult = { success: false, error: error.message };
+      }
+    } else {
+      console.warn('[Sync] getUserSettings 함수 없음');
+    }
+
+    // AI 설정 로드 (안전한 호출)
+    if (functionsExist.getUserAISettings) {
+      try {
+        aiSettingsResult = await getUserAISettings(authResult.userId);
+        console.log('[Sync] AI 설정 로드 결과:', aiSettingsResult.success);
+      } catch (error) {
+        console.error('[Sync] AI 설정 로드 오류:', error);
+        aiSettingsResult = { success: false, error: error.message };
+      }
+    } else {
+      console.warn('[Sync] getUserAISettings 함수 없음');
+    }
+
+    // 번역 기록 로드 (안전한 호출)
+    if (functionsExist.getUserTranslationHistory) {
+      try {
+        historyResult = await getUserTranslationHistory(authResult.userId, 50);
+        console.log('[Sync] 기록 로드 결과:', historyResult.success);
+      } catch (error) {
+        console.error('[Sync] 기록 로드 오류:', error);
+        historyResult = { success: false, error: error.message };
+      }
+    } else {
+      console.warn('[Sync] getUserTranslationHistory 함수 없음');
+    }
+
+    // 결과 조합
+    const userData = {
+      vocabulary: vocabularyResult.success ? Array.from((vocabularyResult.vocabulary || new Map()).entries()) : [],
+      settings: settingsResult.success ? settingsResult.settings : null,
+      aiSettings: aiSettingsResult.success ? aiSettingsResult.aiSettings : null,
+      history: historyResult.success ? historyResult.history : []
+    };
+
+    console.log('[Sync] 최종 사용자 데이터:', {
+      vocabularyCount: userData.vocabulary.length,
+      hasSettings: !!userData.settings,
+      hasAISettings: !!userData.aiSettings,
+      historyCount: userData.history.length
+    });
 
     return {
       statusCode: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: true,
-        userData: {
-          vocabulary: vocabularyResult.success ? Array.from(vocabularyResult.vocabulary.entries()) : [],
-          settings: settingsResult.success ? settingsResult.settings : null,
-          aiSettings: aiSettingsResult.success ? aiSettingsResult.aiSettings : null,
-          history: historyResult.success ? historyResult.history : []
-        }
+        userData: userData
       })
     };
 
@@ -1199,7 +1271,7 @@ async function handleGetUserData(headers) {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: false,
-        error: '사용자 데이터 로드 중 오류가 발생했습니다.'
+        error: `사용자 데이터 로드 중 오류: ${error.message}`
       })
     };
   }
