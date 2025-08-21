@@ -6,18 +6,7 @@ const {
   saveUserApiKey, 
   getUserApiKey,
   supabase,
-  // ✨ 새로 추가되는 함수들
-  saveUserVocabulary,
-  getUserVocabulary,
-  addUserWord,
-  updateUserWord,
-  deleteUserWord,
-  saveUserSettings,
-  getUserSettings,
-  saveUserAISettings,
-  getUserAISettings,
-  saveTranslationHistory,
-  getUserTranslationHistory
+ 
 } = require('./database');
 
 // CORS 헤더 설정

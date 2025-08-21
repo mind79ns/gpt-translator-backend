@@ -585,7 +585,189 @@ async function getUserTranslationHistory(userId, limit = 50) {
     return { success: false, error: error.message };
   }
 }
+// ===================================================
+// 📚 단어장 관리 함수들 (누락된 함수들 구현)
+// ===================================================
 
+// 사용자 단어장 전체 저장
+async function saveUserVocabulary(userId, vocabularyData) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    // vocabularyData가 Map 객체인 경우 배열로 변환
+    let vocabularyArray;
+    if (vocabularyData instanceof Map) {
+      vocabularyArray = Array.from(vocabularyData.entries());
+    } else if (Array.isArray(vocabularyData)) {
+      vocabularyArray = vocabularyData;
+    } else {
+      return { success: false, error: '잘못된 단어장 데이터 형식' };
+    }
+
+    // 기존 단어장 삭제
+    const { error: deleteError } = await supabase
+      .from('user_vocabulary')
+      .delete()
+      .eq('user_id', userId);
+
+    if (deleteError) {
+      console.error('기존 단어장 삭제 실패:', deleteError);
+    }
+
+    // 새 단어장 데이터 삽입
+    if (vocabularyArray.length > 0) {
+      const insertData = vocabularyArray.map(([original, wordData]) => ({
+        user_id: userId,
+        original_word: original,
+        translation: wordData.translation,
+        description: wordData.description || '',
+        correct_count: wordData.correctCount || 0,
+        wrong_count: wordData.wrongCount || 0,
+        practice_time: wordData.practiceTime || 0,
+        last_studied: wordData.lastStudied || null
+      }));
+
+      const { error: insertError } = await supabase
+        .from('user_vocabulary')
+        .insert(insertData);
+
+      if (insertError) throw insertError;
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('사용자 단어장 저장 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 사용자 단어장 로드
+async function getUserVocabulary(userId) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { data, error } = await supabase
+      .from('user_vocabulary')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // 데이터를 Map 형태로 변환
+    const vocabularyMap = new Map();
+    
+    if (data && data.length > 0) {
+      data.forEach(row => {
+        vocabularyMap.set(row.original_word, {
+          original: row.original_word,
+          translation: row.translation,
+          description: row.description,
+          addedDate: row.created_at,
+          correctCount: row.correct_count,
+          wrongCount: row.wrong_count,
+          practiceTime: row.practice_time,
+          lastStudied: row.last_studied
+        });
+      });
+    }
+
+    return { success: true, vocabulary: vocabularyMap };
+  } catch (error) {
+    console.error('사용자 단어장 로드 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 개별 단어 추가
+async function addUserWord(userId, wordData) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { data, error } = await supabase
+      .from('user_vocabulary')
+      .insert([{
+        user_id: userId,
+        original_word: wordData.original,
+        translation: wordData.translation,
+        description: wordData.description || '',
+        correct_count: wordData.correctCount || 0,
+        wrong_count: wordData.wrongCount || 0,
+        practice_time: wordData.practiceTime || 0,
+        last_studied: wordData.lastStudied || null
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return { success: true, word: data };
+  } catch (error) {
+    console.error('단어 추가 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 개별 단어 업데이트
+async function updateUserWord(userId, originalWord, updateData) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const updateFields = {};
+    
+    if (updateData.translation !== undefined) updateFields.translation = updateData.translation;
+    if (updateData.description !== undefined) updateFields.description = updateData.description;
+    if (updateData.correctCount !== undefined) updateFields.correct_count = updateData.correctCount;
+    if (updateData.wrongCount !== undefined) updateFields.wrong_count = updateData.wrongCount;
+    if (updateData.practiceTime !== undefined) updateFields.practice_time = updateData.practiceTime;
+    if (updateData.lastStudied !== undefined) updateFields.last_studied = updateData.lastStudied;
+
+    const { data, error } = await supabase
+      .from('user_vocabulary')
+      .update(updateFields)
+      .eq('user_id', userId)
+      .eq('original_word', originalWord)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return { success: true, word: data };
+  } catch (error) {
+    console.error('단어 업데이트 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 개별 단어 삭제
+async function deleteUserWord(userId, originalWord) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { error } = await supabase
+      .from('user_vocabulary')
+      .delete()
+      .eq('user_id', userId)
+      .eq('original_word', originalWord);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error) {
+    console.error('단어 삭제 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
 module.exports = {
   supabase,
   createUser,
@@ -598,17 +780,4 @@ module.exports = {
   setPublicCache,
   encryptApiKey,
   decryptApiKey,
-  // 기존 단어장 함수들
-  saveUserVocabulary,
-  getUserVocabulary,
-  addUserWord,
-  updateUserWord,
-  deleteUserWord,
-  // ✨ 새로 추가되는 함수들
-  saveUserSettings,
-  getUserSettings,
-  saveUserAISettings,
-  getUserAISettings,
-  saveTranslationHistory,
-  getUserTranslationHistory
-};
+}
