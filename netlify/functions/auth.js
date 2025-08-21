@@ -1,4 +1,7 @@
 // auth.js - 사용자 인증 및 API 키 관리 Netlify Function
+const databaseModule = require('./database');
+
+// 안전한 함수 추출
 const { 
   createUser, 
   authenticateUser, 
@@ -6,8 +9,37 @@ const {
   saveUserApiKey, 
   getUserApiKey,
   supabase,
- 
-} = require('./database');
+  trackUsage, 
+  getPublicCache, 
+  setPublicCache 
+} = databaseModule;
+
+// 단어장 관련 함수들 (안전한 추출)
+const saveUserVocabulary = databaseModule.saveUserVocabulary || null;
+const getUserVocabulary = databaseModule.getUserVocabulary || null;
+const addUserWord = databaseModule.addUserWord || null;
+const updateUserWord = databaseModule.updateUserWord || null;
+const deleteUserWord = databaseModule.deleteUserWord || null;
+
+// 설정 관련 함수들 (안전한 추출)
+const saveUserSettings = databaseModule.saveUserSettings || null;
+const getUserSettings = databaseModule.getUserSettings || null;
+const saveUserAISettings = databaseModule.saveUserAISettings || null;
+const getUserAISettings = databaseModule.getUserAISettings || null;
+const saveTranslationHistory = databaseModule.saveTranslationHistory || null;
+const getUserTranslationHistory = databaseModule.getUserTranslationHistory || null;
+
+// 함수 존재 확인 로그
+console.log('[Auth] 함수 로드 상태:', {
+  saveUserVocabulary: !!saveUserVocabulary,
+  getUserVocabulary: !!getUserVocabulary,
+  saveUserSettings: !!saveUserSettings,
+  getUserSettings: !!getUserSettings,
+  saveUserAISettings: !!saveUserAISettings,
+  getUserAISettings: !!getUserAISettings,
+  saveTranslationHistory: !!saveTranslationHistory,
+  getUserTranslationHistory: !!getUserTranslationHistory
+});
 
 // CORS 헤더 설정
 const corsHeaders = {
@@ -957,7 +989,7 @@ async function handleSyncUserData(headers) {
   }
 }
 
-// 단어장 저장
+// 단어장 저장 (안전한 버전)
 async function handleSaveVocabulary(headers, vocabularyData) {
   console.log('[Sync] 단어장 저장 요청');
 
@@ -971,6 +1003,23 @@ async function handleSaveVocabulary(headers, vocabularyData) {
   }
 
   try {
+    console.log('[Sync] saveUserVocabulary 함수 존재 확인:', !!saveUserVocabulary);
+    
+    // 함수 존재 확인
+    if (!saveUserVocabulary || typeof saveUserVocabulary !== 'function') {
+      console.error('[Sync] saveUserVocabulary 함수가 로드되지 않음');
+      return {
+        statusCode: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: false,
+          error: 'saveUserVocabulary 함수를 찾을 수 없습니다.'
+        })
+      };
+    }
+
+    console.log('[Sync] 단어장 저장 시작 - 데이터 크기:', vocabularyData ? vocabularyData.length : 0);
+    
     const result = await saveUserVocabulary(authResult.userId, vocabularyData);
 
     if (result.success) {
@@ -984,6 +1033,7 @@ async function handleSaveVocabulary(headers, vocabularyData) {
         })
       };
     } else {
+      console.error('[Sync] 단어장 저장 실패:', result.error);
       return {
         statusCode: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
