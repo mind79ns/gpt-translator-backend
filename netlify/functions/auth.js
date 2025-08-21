@@ -5,7 +5,19 @@ const {
   verifyToken, 
   saveUserApiKey, 
   getUserApiKey,
-  supabase
+  supabase,
+  // ✨ 새로 추가되는 함수들
+  saveUserVocabulary,
+  getUserVocabulary,
+  addUserWord,
+  updateUserWord,
+  deleteUserWord,
+  saveUserSettings,
+  getUserSettings,
+  saveUserAISettings,
+  getUserAISettings,
+  saveTranslationHistory,
+  getUserTranslationHistory
 } = require('./database');
 
 // CORS 헤더 설정
@@ -77,6 +89,24 @@ exports.handler = async function (event, context) {
 
       case 'verify-token':
         return await handleVerifyToken(event.headers);
+
+        case 'sync-user-data':
+        return await handleSyncUserData(event.headers);
+      
+      case 'save-vocabulary':
+        return await handleSaveVocabulary(event.headers, JSON.parse(event.body).vocabularyData);
+      
+      case 'save-settings':
+        return await handleSaveSettings(event.headers, JSON.parse(event.body).settings);
+      
+      case 'save-ai-settings':
+        return await handleSaveAISettings(event.headers, JSON.parse(event.body).aiSettings);
+      
+      case 'save-translation-history':
+        return await handleSaveTranslationHistory(event.headers, JSON.parse(event.body).historyData);
+      
+      case 'get-user-data':
+        return await handleGetUserData(event.headers);
 
       default:
         return {
@@ -879,6 +909,308 @@ async function handleGetDashboardData(headers) {
       body: JSON.stringify({
         success: false,
         error: '대시보드 데이터 조회 중 오류가 발생했습니다.'
+      })
+    };
+  }
+}
+// ===================================================
+// 🔄 데이터 동기화 핸들러 함수들
+// ===================================================
+
+// 전체 사용자 데이터 동기화
+async function handleSyncUserData(headers) {
+  console.log('[Sync] 사용자 데이터 동기화 요청');
+
+  const authResult = await verifyAuthToken(headers);
+  if (!authResult.success) {
+    return {
+      statusCode: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, error: authResult.error })
+    };
+  }
+
+  try {
+    // 모든 사용자 데이터 병렬 로드
+    const [vocabularyResult, settingsResult, aiSettingsResult, historyResult] = await Promise.all([
+      getUserVocabulary(authResult.userId),
+      getUserSettings(authResult.userId),
+      getUserAISettings(authResult.userId),
+      getUserTranslationHistory(authResult.userId, 50)
+    ]);
+
+    console.log(`[Sync] 데이터 동기화 완료 - 사용자: ${authResult.userId}`);
+
+    return {
+      statusCode: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: true,
+        data: {
+          vocabulary: vocabularyResult.success ? vocabularyResult.vocabulary : new Map(),
+          settings: settingsResult.success ? settingsResult.settings : {},
+          aiSettings: aiSettingsResult.success ? aiSettingsResult.aiSettings : {},
+          history: historyResult.success ? historyResult.history : []
+        }
+      })
+    };
+
+  } catch (error) {
+    console.error('[Sync] 데이터 동기화 오류:', error);
+    return {
+      statusCode: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        error: '데이터 동기화 중 오류가 발생했습니다.'
+      })
+    };
+  }
+}
+
+// 단어장 저장
+async function handleSaveVocabulary(headers, vocabularyData) {
+  console.log('[Sync] 단어장 저장 요청');
+
+  const authResult = await verifyAuthToken(headers);
+  if (!authResult.success) {
+    return {
+      statusCode: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, error: authResult.error })
+    };
+  }
+
+  try {
+    const result = await saveUserVocabulary(authResult.userId, vocabularyData);
+
+    if (result.success) {
+      console.log(`[Sync] 단어장 저장 성공 - 사용자: ${authResult.userId}`);
+      return {
+        statusCode: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: true,
+          message: '단어장이 서버에 저장되었습니다.'
+        })
+      };
+    } else {
+      return {
+        statusCode: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: false,
+          error: result.error
+        })
+      };
+    }
+
+  } catch (error) {
+    console.error('[Sync] 단어장 저장 오류:', error);
+    return {
+      statusCode: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        error: '단어장 저장 중 오류가 발생했습니다.'
+      })
+    };
+  }
+}
+
+// 사용자 설정 저장
+async function handleSaveSettings(headers, settings) {
+  console.log('[Sync] 사용자 설정 저장 요청');
+
+  const authResult = await verifyAuthToken(headers);
+  if (!authResult.success) {
+    return {
+      statusCode: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, error: authResult.error })
+    };
+  }
+
+  try {
+    const result = await saveUserSettings(authResult.userId, settings);
+
+    if (result.success) {
+      console.log(`[Sync] 사용자 설정 저장 성공 - 사용자: ${authResult.userId}`);
+      return {
+        statusCode: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: true,
+          message: '사용자 설정이 서버에 저장되었습니다.'
+        })
+      };
+    } else {
+      return {
+        statusCode: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: false,
+          error: result.error
+        })
+      };
+    }
+
+  } catch (error) {
+    console.error('[Sync] 사용자 설정 저장 오류:', error);
+    return {
+      statusCode: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        error: '사용자 설정 저장 중 오류가 발생했습니다.'
+      })
+    };
+  }
+}
+
+// AI 설정 저장
+async function handleSaveAISettings(headers, aiSettings) {
+  console.log('[Sync] AI 설정 저장 요청');
+
+  const authResult = await verifyAuthToken(headers);
+  if (!authResult.success) {
+    return {
+      statusCode: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, error: authResult.error })
+    };
+  }
+
+  try {
+    const result = await saveUserAISettings(authResult.userId, aiSettings);
+
+    if (result.success) {
+      console.log(`[Sync] AI 설정 저장 성공 - 사용자: ${authResult.userId}`);
+      return {
+        statusCode: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: true,
+          message: 'AI 설정이 서버에 저장되었습니다.'
+        })
+      };
+    } else {
+      return {
+        statusCode: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: false,
+          error: result.error
+        })
+      };
+    }
+
+  } catch (error) {
+    console.error('[Sync] AI 설정 저장 오류:', error);
+    return {
+      statusCode: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        error: 'AI 설정 저장 중 오류가 발생했습니다.'
+      })
+    };
+  }
+}
+
+// 번역 기록 저장
+async function handleSaveTranslationHistory(headers, historyData) {
+  console.log('[Sync] 번역 기록 저장 요청');
+
+  const authResult = await verifyAuthToken(headers);
+  if (!authResult.success) {
+    return {
+      statusCode: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, error: authResult.error })
+    };
+  }
+
+  try {
+    const result = await saveTranslationHistory(authResult.userId, historyData);
+
+    if (result.success) {
+      return {
+        statusCode: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: true,
+          message: '번역 기록이 서버에 저장되었습니다.'
+        })
+      };
+    } else {
+      return {
+        statusCode: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          success: false,
+          error: result.error
+        })
+      };
+    }
+
+  } catch (error) {
+    console.error('[Sync] 번역 기록 저장 오류:', error);
+    return {
+      statusCode: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        error: '번역 기록 저장 중 오류가 발생했습니다.'
+      })
+    };
+  }
+}
+
+// 사용자 데이터 전체 로드
+async function handleGetUserData(headers) {
+  console.log('[Sync] 사용자 데이터 로드 요청');
+
+  const authResult = await verifyAuthToken(headers);
+  if (!authResult.success) {
+    return {
+      statusCode: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, error: authResult.error })
+    };
+  }
+
+  try {
+    // 모든 데이터 병렬 로드
+    const [vocabularyResult, settingsResult, aiSettingsResult, historyResult] = await Promise.all([
+      getUserVocabulary(authResult.userId),
+      getUserSettings(authResult.userId),
+      getUserAISettings(authResult.userId),
+      getUserTranslationHistory(authResult.userId, 50)
+    ]);
+
+    return {
+      statusCode: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: true,
+        userData: {
+          vocabulary: vocabularyResult.success ? Array.from(vocabularyResult.vocabulary.entries()) : [],
+          settings: settingsResult.success ? settingsResult.settings : null,
+          aiSettings: aiSettingsResult.success ? aiSettingsResult.aiSettings : null,
+          history: historyResult.success ? historyResult.history : []
+        }
+      })
+    };
+
+  } catch (error) {
+    console.error('[Sync] 사용자 데이터 로드 오류:', error);
+    return {
+      statusCode: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        error: '사용자 데이터 로드 중 오류가 발생했습니다.'
       })
     };
   }

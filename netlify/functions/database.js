@@ -329,6 +329,262 @@ async function setPublicCache(sourceText, targetLang, translation, pronunciation
     return { success: false, error: error.message };
   }
 }
+// ===================================================
+// ⚙️ 사용자 설정 관리 함수들
+// ===================================================
+
+// 사용자 설정 저장
+async function saveUserSettings(userId, settings) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { data, error } = await supabase
+      .from('user_settings')
+      .upsert([{
+        user_id: userId,
+        tts_engine: settings.ttsEngine || 'auto',
+        voice_selection: settings.voiceSelection || 'nova',
+        google_voice: settings.googleVoice || 'vi-VN-Standard-A',
+        volume: settings.volume || 0.8,
+        source_lang: settings.sourceLang || 'Korean',
+        target_lang: settings.targetLang || 'Vietnamese',
+        theme: settings.theme || 'light',
+        pronunciation_enabled: settings.pronunciationEnabled !== false,
+        auto_threshold: settings.autoThreshold || 50,
+        daily_budget: settings.dailyBudget || 1.00,
+        monthly_budget: settings.monthlyBudget || 30.00
+      }], {
+        onConflict: 'user_id',
+        ignoreDuplicates: false
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return { success: true, settings: data };
+  } catch (error) {
+    console.error('사용자 설정 저장 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 사용자 설정 로드
+async function getUserSettings(userId) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { data, error } = await supabase
+      .from('user_settings')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
+    // 데이터가 없으면 기본값 반환
+    if (!data) {
+      return {
+        success: true,
+        settings: {
+          ttsEngine: 'auto',
+          voiceSelection: 'nova',
+          googleVoice: 'vi-VN-Standard-A',
+          volume: 0.8,
+          sourceLang: 'Korean',
+          targetLang: 'Vietnamese',
+          theme: 'light',
+          pronunciationEnabled: true,
+          autoThreshold: 50,
+          dailyBudget: 1.00,
+          monthlyBudget: 30.00
+        }
+      };
+    }
+
+    return {
+      success: true,
+      settings: {
+        ttsEngine: data.tts_engine,
+        voiceSelection: data.voice_selection,
+        googleVoice: data.google_voice,
+        volume: data.volume,
+        sourceLang: data.source_lang,
+        targetLang: data.target_lang,
+        theme: data.theme,
+        pronunciationEnabled: data.pronunciation_enabled,
+        autoThreshold: data.auto_threshold,
+        dailyBudget: data.daily_budget,
+        monthlyBudget: data.monthly_budget
+      }
+    };
+  } catch (error) {
+    console.error('사용자 설정 로드 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ===================================================
+// 🧠 AI 설정 관리 함수들
+// ===================================================
+
+// AI 설정 저장
+async function saveUserAISettings(userId, aiSettings) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { data, error } = await supabase
+      .from('user_ai_settings')
+      .upsert([{
+        user_id: userId,
+        ai_context_mode: aiSettings.aiContextMode || false,
+        translation_style: aiSettings.translationStyle || 'balanced',
+        quality_level: aiSettings.qualityLevel || 3,
+        terminology_dict: aiSettings.terminologyDict || {},
+        translation_context: aiSettings.translationContext || []
+      }], {
+        onConflict: 'user_id',
+        ignoreDuplicates: false
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return { success: true, aiSettings: data };
+  } catch (error) {
+    console.error('AI 설정 저장 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// AI 설정 로드
+async function getUserAISettings(userId) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { data, error } = await supabase
+      .from('user_ai_settings')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
+    // 데이터가 없으면 기본값 반환
+    if (!data) {
+      return {
+        success: true,
+        aiSettings: {
+          aiContextMode: false,
+          translationStyle: 'balanced',
+          qualityLevel: 3,
+          terminologyDict: {},
+          translationContext: []
+        }
+      };
+    }
+
+    return {
+      success: true,
+      aiSettings: {
+        aiContextMode: data.ai_context_mode,
+        translationStyle: data.translation_style,
+        qualityLevel: data.quality_level,
+        terminologyDict: data.terminology_dict,
+        translationContext: data.translation_context
+      }
+    };
+  } catch (error) {
+    console.error('AI 설정 로드 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ===================================================
+// 📚 번역 기록 관리 함수들
+// ===================================================
+
+// 번역 기록 저장
+async function saveTranslationHistory(userId, historyData) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { data, error } = await supabase
+      .from('user_translation_history')
+      .insert([{
+        user_id: userId,
+        source_text: historyData.sourceText,
+        translation: historyData.translation,
+        source_lang: historyData.sourceLang,
+        target_lang: historyData.targetLang,
+        is_ai_translation: historyData.isAI || false
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // 50개 이상이면 오래된 기록 삭제
+    const { data: countData, error: countError } = await supabase
+      .from('user_translation_history')
+      .select('id', { count: 'exact' })
+      .eq('user_id', userId);
+
+    if (!countError && countData && countData.length > 50) {
+      const { error: deleteError } = await supabase
+        .from('user_translation_history')
+        .delete()
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true })
+        .limit(countData.length - 50);
+
+      if (deleteError) console.error('오래된 번역 기록 삭제 실패:', deleteError);
+    }
+
+    return { success: true, history: data };
+  } catch (error) {
+    console.error('번역 기록 저장 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 번역 기록 로드
+async function getUserTranslationHistory(userId, limit = 50) {
+  try {
+    if (!supabase) {
+      return { success: false, error: '데이터베이스 연결 실패' };
+    }
+
+    const { data, error } = await supabase
+      .from('user_translation_history')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    return { success: true, history: data || [] };
+  } catch (error) {
+    console.error('번역 기록 로드 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
 
 module.exports = {
   supabase,
@@ -341,5 +597,18 @@ module.exports = {
   getPublicCache,
   setPublicCache,
   encryptApiKey,
-  decryptApiKey
+  decryptApiKey,
+  // 기존 단어장 함수들
+  saveUserVocabulary,
+  getUserVocabulary,
+  addUserWord,
+  updateUserWord,
+  deleteUserWord,
+  // ✨ 새로 추가되는 함수들
+  saveUserSettings,
+  getUserSettings,
+  saveUserAISettings,
+  getUserAISettings,
+  saveTranslationHistory,
+  getUserTranslationHistory
 };
