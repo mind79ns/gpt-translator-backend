@@ -596,13 +596,24 @@ async function saveUserVocabulary(userId, vocabularyData) {
       return { success: false, error: '데이터베이스 연결 실패' };
     }
 
-    // vocabularyData가 Map 객체인 경우 배열로 변환
+    // vocabularyData 형태 검증 및 변환 (강화된 버전)
     let vocabularyArray;
+    
+    console.log('[Database] 받은 단어장 데이터 타입:', typeof vocabularyData);
+    console.log('[Database] 받은 단어장 데이터:', vocabularyData);
+    
     if (vocabularyData instanceof Map) {
       vocabularyArray = Array.from(vocabularyData.entries());
+      console.log('[Database] Map에서 배열로 변환:', vocabularyArray.length, '개');
     } else if (Array.isArray(vocabularyData)) {
       vocabularyArray = vocabularyData;
+      console.log('[Database] 이미 배열 형태:', vocabularyArray.length, '개');
+    } else if (vocabularyData && typeof vocabularyData === 'object') {
+      // 객체 형태인 경우 entries로 변환 시도
+      vocabularyArray = Object.entries(vocabularyData);
+      console.log('[Database] 객체에서 배열로 변환:', vocabularyArray.length, '개');
     } else {
+      console.error('[Database] 지원하지 않는 데이터 형식:', vocabularyData);
       return { success: false, error: '잘못된 단어장 데이터 형식' };
     }
 
