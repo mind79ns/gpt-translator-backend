@@ -1,7 +1,4 @@
 // auth.js - 사용자 인증 및 API 키 관리 Netlify Function
-const databaseModule = require('./database');
-
-// 안전한 함수 추출
 const { 
   createUser, 
   authenticateUser, 
@@ -9,39 +6,15 @@ const {
   saveUserApiKey, 
   getUserApiKey,
   supabase,
-  trackUsage, 
-  getPublicCache, 
-  setPublicCache 
-} = databaseModule;
+ 
+} = require('./database');
 
-// 단어장 관련 함수들 (안전한 추출)
-const saveUserVocabulary = databaseModule.saveUserVocabulary || null;
-const getUserVocabulary = databaseModule.getUserVocabulary || null;
-const addUserWord = databaseModule.addUserWord || null;
-const updateUserWord = databaseModule.updateUserWord || null;
-const deleteUserWord = databaseModule.deleteUserWord || null;
-
-// 설정 관련 함수들 (안전한 추출)
-const saveUserSettings = databaseModule.saveUserSettings || null;
-const getUserSettings = databaseModule.getUserSettings || null;
-const saveUserAISettings = databaseModule.saveUserAISettings || null;
-const getUserAISettings = databaseModule.getUserAISettings || null;
-const saveTranslationHistory = databaseModule.saveTranslationHistory || null;
-const getUserTranslationHistory = databaseModule.getUserTranslationHistory || null;
-
-// 함수 존재 확인 로그
-console.log('[Auth] 함수 로드 상태:', {
-  saveUserVocabulary: !!saveUserVocabulary,
-  getUserVocabulary: !!getUserVocabulary,
-  saveUserSettings: !!saveUserSettings,
-  getUserSettings: !!getUserSettings,
-  saveUserAISettings: !!saveUserAISettings,
-  getUserAISettings: !!getUserAISettings,
-  saveTranslationHistory: !!saveTranslationHistory,
-  getUserTranslationHistory: !!getUserTranslationHistory
-});
-
-
+// CORS 헤더 설정
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+};
 // 환경변수 체크
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   console.error('[Auth] 환경변수 누락:', {
@@ -50,28 +23,14 @@ if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   });
 }
 exports.handler = async function (event, context) {
-  // 👇 여기에 새 코드를 추가하세요
-  const allowedOrigins = [
-      'https://mind79ns.github.io', // 깃허브 페이지 주소
-      
-  ];
-  const origin = event.headers.origin;
-  const corsHeaders = {
-      'Access-Control-Allow-Origin': allowedOrigins.includes(origin) ? origin : allowedOrigins[0],
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS'
-  };
-  // 👆 여기까지 추가
-
   // 🔧 OPTIONS 요청 처리 (CORS preflight)
   if (event.httpMethod === "OPTIONS") {
     return {
-      statusCode: 204, // 204로 변경
-      headers: corsHeaders, // <-- 새로 만든 변수 사용
+      statusCode: 200,
+      headers: corsHeaders,
       body: ''
     };
   }
-// ...
 
   // 🔧 POST 요청만 허용
   if (event.httpMethod !== "POST") {
@@ -998,7 +957,7 @@ async function handleSyncUserData(headers) {
   }
 }
 
-// 단어장 저장 (안전한 버전)
+// 단어장 저장
 async function handleSaveVocabulary(headers, vocabularyData) {
   console.log('[Sync] 단어장 저장 요청');
 
@@ -1012,23 +971,6 @@ async function handleSaveVocabulary(headers, vocabularyData) {
   }
 
   try {
-    console.log('[Sync] saveUserVocabulary 함수 존재 확인:', !!saveUserVocabulary);
-    
-    // 함수 존재 확인
-    if (!saveUserVocabulary || typeof saveUserVocabulary !== 'function') {
-      console.error('[Sync] saveUserVocabulary 함수가 로드되지 않음');
-      return {
-        statusCode: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          success: false,
-          error: 'saveUserVocabulary 함수를 찾을 수 없습니다.'
-        })
-      };
-    }
-
-    console.log('[Sync] 단어장 저장 시작 - 데이터 크기:', vocabularyData ? vocabularyData.length : 0);
-    
     const result = await saveUserVocabulary(authResult.userId, vocabularyData);
 
     if (result.success) {
@@ -1042,7 +984,6 @@ async function handleSaveVocabulary(headers, vocabularyData) {
         })
       };
     } else {
-      console.error('[Sync] 단어장 저장 실패:', result.error);
       return {
         statusCode: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1215,7 +1156,7 @@ async function handleSaveTranslationHistory(headers, historyData) {
   }
 }
 
-// 사용자 데이터 전체 로드 (안전한 버전)
+// 사용자 데이터 전체 로드
 async function handleGetUserData(headers) {
   console.log('[Sync] 사용자 데이터 로드 요청');
 
@@ -1229,97 +1170,25 @@ async function handleGetUserData(headers) {
   }
 
   try {
-    console.log('[Sync] 함수 존재 확인 시작...');
-    
-    // 함수 존재 확인
-    const functionsExist = {
-      getUserVocabulary: typeof getUserVocabulary === 'function',
-      getUserSettings: typeof getUserSettings === 'function',
-      getUserAISettings: typeof getUserAISettings === 'function',
-      getUserTranslationHistory: typeof getUserTranslationHistory === 'function'
-    };
-    
-    console.log('[Sync] 함수 존재 확인 결과:', functionsExist);
-
-    // 안전한 함수 호출들
-    let vocabularyResult = { success: true, vocabulary: [] };
-    let settingsResult = { success: true, settings: null };
-    let aiSettingsResult = { success: true, aiSettings: null };
-    let historyResult = { success: true, history: [] };
-
-    // 단어장 로드 (안전한 호출)
-    if (functionsExist.getUserVocabulary) {
-      try {
-        vocabularyResult = await getUserVocabulary(authResult.userId);
-        console.log('[Sync] 단어장 로드 결과:', vocabularyResult.success);
-      } catch (error) {
-        console.error('[Sync] 단어장 로드 오류:', error);
-        vocabularyResult = { success: false, error: error.message };
-      }
-    } else {
-      console.warn('[Sync] getUserVocabulary 함수 없음');
-    }
-
-    // 사용자 설정 로드 (안전한 호출)
-    if (functionsExist.getUserSettings) {
-      try {
-        settingsResult = await getUserSettings(authResult.userId);
-        console.log('[Sync] 설정 로드 결과:', settingsResult.success);
-      } catch (error) {
-        console.error('[Sync] 설정 로드 오류:', error);
-        settingsResult = { success: false, error: error.message };
-      }
-    } else {
-      console.warn('[Sync] getUserSettings 함수 없음');
-    }
-
-    // AI 설정 로드 (안전한 호출)
-    if (functionsExist.getUserAISettings) {
-      try {
-        aiSettingsResult = await getUserAISettings(authResult.userId);
-        console.log('[Sync] AI 설정 로드 결과:', aiSettingsResult.success);
-      } catch (error) {
-        console.error('[Sync] AI 설정 로드 오류:', error);
-        aiSettingsResult = { success: false, error: error.message };
-      }
-    } else {
-      console.warn('[Sync] getUserAISettings 함수 없음');
-    }
-
-    // 번역 기록 로드 (안전한 호출)
-    if (functionsExist.getUserTranslationHistory) {
-      try {
-        historyResult = await getUserTranslationHistory(authResult.userId, 50);
-        console.log('[Sync] 기록 로드 결과:', historyResult.success);
-      } catch (error) {
-        console.error('[Sync] 기록 로드 오류:', error);
-        historyResult = { success: false, error: error.message };
-      }
-    } else {
-      console.warn('[Sync] getUserTranslationHistory 함수 없음');
-    }
-
-    // 결과 조합
-    const userData = {
-      vocabulary: vocabularyResult.success ? Array.from((vocabularyResult.vocabulary || new Map()).entries()) : [],
-      settings: settingsResult.success ? settingsResult.settings : null,
-      aiSettings: aiSettingsResult.success ? aiSettingsResult.aiSettings : null,
-      history: historyResult.success ? historyResult.history : []
-    };
-
-    console.log('[Sync] 최종 사용자 데이터:', {
-      vocabularyCount: userData.vocabulary.length,
-      hasSettings: !!userData.settings,
-      hasAISettings: !!userData.aiSettings,
-      historyCount: userData.history.length
-    });
+    // 모든 데이터 병렬 로드
+    const [vocabularyResult, settingsResult, aiSettingsResult, historyResult] = await Promise.all([
+      getUserVocabulary(authResult.userId),
+      getUserSettings(authResult.userId),
+      getUserAISettings(authResult.userId),
+      getUserTranslationHistory(authResult.userId, 50)
+    ]);
 
     return {
       statusCode: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: true,
-        userData: userData
+        userData: {
+          vocabulary: vocabularyResult.success ? Array.from(vocabularyResult.vocabulary.entries()) : [],
+          settings: settingsResult.success ? settingsResult.settings : null,
+          aiSettings: aiSettingsResult.success ? aiSettingsResult.aiSettings : null,
+          history: historyResult.success ? historyResult.history : []
+        }
       })
     };
 
@@ -1330,7 +1199,7 @@ async function handleGetUserData(headers) {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: false,
-        error: `사용자 데이터 로드 중 오류: ${error.message}`
+        error: '사용자 데이터 로드 중 오류가 발생했습니다.'
       })
     };
   }

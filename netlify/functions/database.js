@@ -8,13 +8,6 @@ const crypto = require('crypto');
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || '';
 
-// 함수 정의 확인 로그
-if (supabase) {
-  console.log('[Database] Supabase 연결 성공');
-} else {
-  console.error('[Database] Supabase 연결 실패 - 환경변수를 확인하세요');
-}
-
 // 환경변수 체크
 if (!supabaseUrl || !supabaseServiceKey) {
   console.error('[Database] 필수 환경변수 누락:', {
@@ -593,7 +586,7 @@ async function getUserTranslationHistory(userId, limit = 50) {
   }
 }
 // ===================================================
-// 📚 단어장 관리 함수들 (누락된 함수들 완전 구현)
+// 📚 단어장 관리 함수들 (누락된 함수들 구현)
 // ===================================================
 
 // 사용자 단어장 전체 저장
@@ -603,24 +596,13 @@ async function saveUserVocabulary(userId, vocabularyData) {
       return { success: false, error: '데이터베이스 연결 실패' };
     }
 
-    // vocabularyData 형태 검증 및 변환 (강화된 버전)
+    // vocabularyData가 Map 객체인 경우 배열로 변환
     let vocabularyArray;
-    
-    console.log('[Database] 받은 단어장 데이터 타입:', typeof vocabularyData);
-    console.log('[Database] 받은 단어장 데이터:', vocabularyData);
-    
     if (vocabularyData instanceof Map) {
       vocabularyArray = Array.from(vocabularyData.entries());
-      console.log('[Database] Map에서 배열로 변환:', vocabularyArray.length, '개');
     } else if (Array.isArray(vocabularyData)) {
       vocabularyArray = vocabularyData;
-      console.log('[Database] 이미 배열 형태:', vocabularyArray.length, '개');
-    } else if (vocabularyData && typeof vocabularyData === 'object') {
-      // 객체 형태인 경우 entries로 변환 시도
-      vocabularyArray = Object.entries(vocabularyData);
-      console.log('[Database] 객체에서 배열로 변환:', vocabularyArray.length, '개');
     } else {
-      console.error('[Database] 지원하지 않는 데이터 형식:', vocabularyData);
       return { success: false, error: '잘못된 단어장 데이터 형식' };
     }
 
@@ -661,15 +643,12 @@ async function saveUserVocabulary(userId, vocabularyData) {
   }
 }
 
-// 사용자 단어장 로드 (개선된 버전)
+// 사용자 단어장 로드
 async function getUserVocabulary(userId) {
   try {
     if (!supabase) {
-      console.error('[Database] Supabase 연결 실패');
       return { success: false, error: '데이터베이스 연결 실패' };
     }
-
-    console.log('[Database] 단어장 로드 시작 - 사용자 ID:', userId);
 
     const { data, error } = await supabase
       .from('user_vocabulary')
@@ -677,40 +656,29 @@ async function getUserVocabulary(userId) {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('[Database] 단어장 조회 오류:', error);
-      throw error;
-    }
-
-    console.log('[Database] 조회된 단어장 데이터:', data);
-    console.log('[Database] 단어장 개수:', data ? data.length : 0);
+    if (error) throw error;
 
     // 데이터를 Map 형태로 변환
     const vocabularyMap = new Map();
     
     if (data && data.length > 0) {
       data.forEach(row => {
-        console.log('[Database] 단어 처리:', row.original_word);
         vocabularyMap.set(row.original_word, {
           original: row.original_word,
           translation: row.translation,
-          description: row.description || '',
+          description: row.description,
           addedDate: row.created_at,
-          correctCount: row.correct_count || 0,
-          wrongCount: row.wrong_count || 0,
-          practiceTime: row.practice_time || 0,
+          correctCount: row.correct_count,
+          wrongCount: row.wrong_count,
+          practiceTime: row.practice_time,
           lastStudied: row.last_studied
         });
       });
-      
-      console.log('[Database] Map 변환 완료 - 크기:', vocabularyMap.size);
-    } else {
-      console.log('[Database] 단어장 데이터 없음');
     }
 
     return { success: true, vocabulary: vocabularyMap };
   } catch (error) {
-    console.error('[Database] 사용자 단어장 로드 실패:', error);
+    console.error('사용자 단어장 로드 실패:', error);
     return { success: false, error: error.message };
   }
 }
@@ -800,48 +768,16 @@ async function deleteUserWord(userId, originalWord) {
     return { success: false, error: error.message };
   }
 }
-// 모든 함수들을 명확하게 export
 module.exports = {
-  // Supabase 인스턴스
   supabase,
-  
-  // 인증 관련 함수들
   createUser,
   authenticateUser,
   verifyToken,
-  
-  // API 키 관리
   saveUserApiKey,
   getUserApiKey,
-  encryptApiKey,
-  decryptApiKey,
-  
-  // 사용량 추적
   trackUsage,
-  
-  // 캐시 관리
   getPublicCache,
   setPublicCache,
-  
-  // 단어장 관련 함수들
-  saveUserVocabulary,
-  getUserVocabulary,
-  addUserWord,
-  updateUserWord,
-  deleteUserWord,
-  
-  // 설정 관련 함수들
-  saveUserSettings,
-  getUserSettings,
-  
-  // AI 설정 관련 함수들
-  saveUserAISettings,
-  getUserAISettings,
-  
-  // 번역 기록 관련 함수들
-  saveTranslationHistory,
-  getUserTranslationHistory
-};
-
-// Export 검증
-console.log('[Database] Exported functions:', Object.keys(module.exports).filter(key => typeof module.exports[key] === 'function'));
+  encryptApiKey,
+  decryptApiKey,
+}
