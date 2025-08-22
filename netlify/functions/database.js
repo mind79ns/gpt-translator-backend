@@ -8,13 +8,6 @@ const crypto = require('crypto');
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || '';
 
-// 함수 정의 확인 로그
-if (supabase) {
-  console.log('[Database] Supabase 연결 성공');
-} else {
-  console.error('[Database] Supabase 연결 실패 - 환경변수를 확인하세요');
-}
-
 // 환경변수 체크
 if (!supabaseUrl || !supabaseServiceKey) {
   console.error('[Database] 필수 환경변수 누락:', {
@@ -800,48 +793,29 @@ async function deleteUserWord(userId, originalWord) {
     return { success: false, error: error.message };
   }
 }
-// 모든 함수들을 명확하게 export
 module.exports = {
-  // Supabase 인스턴스
   supabase,
-  
-  // 인증 관련 함수들
   createUser,
   authenticateUser,
   verifyToken,
-  
-  // API 키 관리
   saveUserApiKey,
   getUserApiKey,
-  encryptApiKey,
-  decryptApiKey,
-  
-  // 사용량 추적
   trackUsage,
-  
-  // 캐시 관리
   getPublicCache,
   setPublicCache,
-  
-  // 단어장 관련 함수들
+  encryptApiKey,
+  decryptApiKey,
+ // ✨ 단어장 함수들 추가
   saveUserVocabulary,
   getUserVocabulary,
   addUserWord,
   updateUserWord,
   deleteUserWord,
-  
-  // 설정 관련 함수들
+  // ✨ 설정 및 AI 함수들
   saveUserSettings,
   getUserSettings,
-  
-  // AI 설정 관련 함수들
   saveUserAISettings,
   getUserAISettings,
-  
-  // 번역 기록 관련 함수들
   saveTranslationHistory,
   getUserTranslationHistory
 };
-
-// Export 검증
-console.log('[Database] Exported functions:', Object.keys(module.exports).filter(key => typeof module.exports[key] === 'function'));
