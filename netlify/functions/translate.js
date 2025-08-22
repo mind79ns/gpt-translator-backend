@@ -489,15 +489,29 @@ async function getOpenAITTS(text, voice = 'alloy', apiKey = null) {
 
 // 🚀 메인 핸들러 - AI 문맥 번역 기능 통합
 exports.handler = async function (event, context) {
-  const commonHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
+  // 👇 여기에 새 코드를 추가하세요
+  const allowedOrigins = [
+      'https://mind79ns.github.io',
+      'http://localhost',
+      'http://127.0.0.1'
+  ];
+  const origin = event.headers.origin;
+  const corsHeaders = {
+      'Access-Control-Allow-Origin': allowedOrigins.includes(origin) ? origin : allowedOrigins[0],
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS'
   };
+  // 👆 여기까지 추가
 
+  // OPTIONS 요청 처리
   if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 200, headers: commonHeaders, body: '' };
+    return { 
+        statusCode: 204, 
+        headers: corsHeaders, 
+        body: '' 
+    };
   }
+// ...
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, headers: { ...commonHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ error: "Method Not Allowed" }) };
   }

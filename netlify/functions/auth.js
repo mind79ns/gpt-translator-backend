@@ -41,12 +41,7 @@ console.log('[Auth] 함수 로드 상태:', {
   getUserTranslationHistory: !!getUserTranslationHistory
 });
 
-// CORS 헤더 설정
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS'
-};
+
 // 환경변수 체크
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   console.error('[Auth] 환경변수 누락:', {
@@ -55,14 +50,28 @@ if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   });
 }
 exports.handler = async function (event, context) {
+  // 👇 여기에 새 코드를 추가하세요
+  const allowedOrigins = [
+      'https://mind79ns.github.io', // 깃허브 페이지 주소
+      
+  ];
+  const origin = event.headers.origin;
+  const corsHeaders = {
+      'Access-Control-Allow-Origin': allowedOrigins.includes(origin) ? origin : allowedOrigins[0],
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS'
+  };
+  // 👆 여기까지 추가
+
   // 🔧 OPTIONS 요청 처리 (CORS preflight)
   if (event.httpMethod === "OPTIONS") {
     return {
-      statusCode: 200,
-      headers: corsHeaders,
+      statusCode: 204, // 204로 변경
+      headers: corsHeaders, // <-- 새로 만든 변수 사용
       body: ''
     };
   }
+// ...
 
   // 🔧 POST 요청만 허용
   if (event.httpMethod !== "POST") {
