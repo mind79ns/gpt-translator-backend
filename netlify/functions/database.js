@@ -83,51 +83,54 @@ async function createUser(email, password, displayName = null) {
   }
 }
 
+// database.js
+
+// [시작점] 아래 함수 전체를 교체합니다.
+// 🔐 사용자 인증 (Supabase 공식 방식으로 수정)
 async function authenticateUser(email, password) {
   try {
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email.toLowerCase())
-      .single();
+    // 💡 supabase.auth.signInWithPassword() 공식 함수를 사용합니다.
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.toLowerCase().trim(),
+      password: password,
+    });
 
-   if (error || !user) {
-      return { success: false, error: '사용자를 찾을 수 없습니다.' };
+    if (error) {
+      // 로그인 실패 시 Supabase가 제공하는 에러를 반환합니다.
+      return { success: false, error: error.message };
+    }
+    
+    if (data && data.user) {
+      // 로그인 성공 시, data.user 객체에는 올바른 UUID를 가진 id가 포함됩니다.
+      const user = data.user;
+      
+      // JWT 토큰 생성
+      const token = jwt.sign(
+        { userId: user.id, email: user.email }, // user.id는 이제 UUID 입니다.
+        process.env.JWT_SECRET || 'default-jwt-secret',
+        { expiresIn: '7d' }
+      );
+      
+      return { 
+        success: true, 
+        user: { 
+          id: user.id, 
+          email: user.email, 
+          displayName: user.user_metadata?.display_name || user.email, // displayName을 user_metadata에서 가져옵니다.
+          isPremium: user.user_metadata?.is_premium || false
+        }, 
+        token 
+      };
     }
 
-    // 🎯 추가: 데이터베이스에서 password_hash가 비어있는 경우를 방지하는 방어 코드
-    if (!user.password_hash) {
-      console.error(`[Auth] Critical: User ${user.email} (ID: ${user.id}) has no password_hash.`);
-      return { success: false, error: '사용자 계정에 문제가 있습니다. 관리자에게 문의하세요.' };
-    }
+    return { success: false, error: '알 수 없는 로그인 오류가 발생했습니다.' };
 
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    if (!isValidPassword) {
-      return { success: false, error: '비밀번호가 일치하지 않습니다.' };
-    }
-
-    // JWT 토큰 생성
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'default-jwt-secret',
-      { expiresIn: '7d' }
-    );
-
-    return { 
-      success: true, 
-      user: { 
-        id: user.id, 
-        email: user.email, 
-        displayName: user.display_name,
-        isPremium: user.is_premium 
-      }, 
-      token 
-    };
   } catch (error) {
-    console.error('사용자 인증 실패:', error);
+    console.error('사용자 인증 처리 중 심각한 오류:', error);
     return { success: false, error: error.message };
   }
 }
+// [끝점]
 
 async function verifyToken(token) {
   try {
