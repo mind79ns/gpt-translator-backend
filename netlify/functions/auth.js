@@ -948,15 +948,68 @@ async function handleGetDashboardData(headers) {
       );
     }
 
-    // 3. 사용량 통계 (trackUsage 함수가 있다면)
-    if (typeof trackUsage === 'function') {
-      // 실제 사용량 데이터 조회 (구현 필요시)
-      // 현재는 임시 데이터
-      dashboardData.usage.daily.translations = Math.floor(Math.random() * 50);
-      dashboardData.usage.daily.cost = parseFloat((Math.random() * 0.5).toFixed(2));
-      dashboardData.usage.monthly.translations = Math.floor(Math.random() * 500);
-      dashboardData.usage.monthly.cost = parseFloat((Math.random() * 10).toFixed(2));
-    }
+  // 3. 사용량 통계 - 실제 데이터베이스 조회
+const today = new Date().toISOString().split('T')[0];
+const currentMonth = today.substring(0, 7);
+
+// 오늘 사용량 조회
+if (supabase) {
+  promises.push(
+    supabase
+      .from('usage_logs')
+      .select('translation_count, tts_count, cost_usd')
+      .eq('user_id', authResult.userId)
+      .eq('date', today)
+      .then(({ data, error }) => {
+        if (!error && data && data.length > 0) {
+          // 오늘 데이터 합산
+          const todayTotals = data.reduce((acc, log) => {
+            acc.translations += log.translation_count || 0;
+            acc.tts += log.tts_count || 0;
+            acc.cost += log.cost_usd || 0;
+            return acc;
+          }, { translations: 0, tts: 0, cost: 0 });
+          
+          dashboardData.usage.daily.translations = todayTotals.translations;
+          dashboardData.usage.daily.cost = todayTotals.cost;
+        }
+        console.log('[Dashboard] 오늘 사용량:', dashboardData.usage.daily);
+      })
+      .catch(err => {
+        console.error('[Dashboard] 일일 사용량 조회 실패:', err);
+      })
+  );
+  
+  // 월간 사용량 조회
+  promises.push(
+    supabase
+      .from('usage_logs')
+      .select('translation_count, tts_count, cost_usd')
+      .eq('user_id', authResult.userId)
+      .gte('date', `${currentMonth}-01`)
+      .lte('date', `${currentMonth}-31`)
+      .then(({ data, error }) => {
+        if (!error && data) {
+          // 월간 데이터 합산
+          const monthlyTotals = data.reduce((acc, log) => {
+            acc.translations += log.translation_count || 0;
+            acc.tts += log.tts_count || 0;
+            acc.cost += log.cost_usd || 0;
+            return acc;
+          }, { translations: 0, tts: 0, cost: 0 });
+          
+          dashboardData.usage.monthly.translations = monthlyTotals.translations;
+          dashboardData.usage.monthly.cost = monthlyTotals.cost;
+        }
+        console.log('[Dashboard] 월간 사용량:', dashboardData.usage.monthly);
+      })
+      .catch(err => {
+        console.error('[Dashboard] 월간 사용량 조회 실패:', err);
+      })
+  );
+} else {
+  console.log('[Dashboard] Supabase 연결 없음 - 기본값 사용');
+}
 
     // 모든 비동기 작업 완료 대기
     await Promise.all(promises);
