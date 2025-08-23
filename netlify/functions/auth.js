@@ -690,12 +690,13 @@ async function handleVerifyToken(headers) {
 
 // auth.js
 
-// [시작] async function handleGetUsage(headers)
-// 📊 사용량 조회 처리 (날짜 계산 로직 수정 버전)
-async function handleGetUsage(headers) {
-  console.log('[Usage] 사용량 조회 요청');
+// auth.js
 
-  // 인증 확인
+// [시작점] 교체할 함수
+// 📊 사용량 조회 처리 (중복 데이터 방어 로직 추가 버전)
+async function handleGetUsage(headers) {
+  console.log('[Usage] 사용량 조회 요청 (안전 모드)');
+
   const authResult = await verifyAuthToken(headers);
   if (!authResult.success) {
     return {
@@ -706,38 +707,33 @@ async function handleGetUsage(headers) {
   }
 
   try {
-    // --- 🔴 [수정] 날짜 계산 방식 변경 ---
     const now = new Date();
     const today = now.toISOString().split('T')[0];
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-    // --- 수정 끝 ---
 
-    // 🔧 오늘 사용량 조회
-    const { data: todayUsage, error: todayError } = await supabase
+    // 🔴 [수정] .single() 대신 .limit(1)을 사용하여 중복 데이터에도 서버가 중단되지 않도록 변경
+    const { data: todayResult, error: todayError } = await supabase
       .from('usage_logs')
       .select('*')
       .eq('user_id', authResult.userId)
       .eq('date', today)
-      .single();
+      .limit(1);
 
-    if (todayError && todayError.code !== 'PGRST116') {
-      throw todayError;
-    }
+    if (todayError) throw todayError;
 
-    // 🔧 이번 달 사용량 조회 (수정된 날짜 변수 사용)
+    // 결과가 배열이므로 첫 번째 요소를 사용
+    const todayUsage = (todayResult && todayResult.length > 0) ? todayResult[0] : null;
+
     const { data: monthlyUsage, error: monthlyError } = await supabase
       .from('usage_logs')
       .select('translation_count, tts_count, cost_usd')
       .eq('user_id', authResult.userId)
-      .gte('date', firstDayOfMonth) // 👈 수정
-      .lte('date', lastDayOfMonth);   // 👈 수정
+      .gte('date', firstDayOfMonth)
+      .lte('date', lastDayOfMonth);
 
-    if (monthlyError) {
-      throw monthlyError;
-    }
+    if (monthlyError) throw monthlyError;
 
-    // 🔧 월별 사용량 합계 계산
     const monthlyTotals = monthlyUsage.reduce((acc, row) => {
       acc.translations += row.translation_count || 0;
       acc.tts += row.tts_count || 0;
@@ -745,9 +741,8 @@ async function handleGetUsage(headers) {
       return acc;
     }, { translations: 0, tts: 0, cost: 0 });
 
-    // 🔧 지난 7일 사용량 조회
     const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6); // 오늘을 포함하여 7일
+    sevenDaysAgo.setDate(now.getDate() - 6);
     const weekStartDate = sevenDaysAgo.toISOString().split('T')[0];
 
     const { data: weeklyUsage, error: weeklyError } = await supabase
@@ -758,11 +753,7 @@ async function handleGetUsage(headers) {
       .lte('date', today)
       .order('date', { ascending: true });
 
-    if (weeklyError) {
-      throw weeklyError;
-    }
-
-    console.log(`[Usage] 사용량 조회 완료 - 사용자: ${authResult.userId}`);
+    if (weeklyError) throw weeklyError;
 
     return {
       statusCode: 200,
@@ -775,16 +766,11 @@ async function handleGetUsage(headers) {
             tts: todayUsage?.tts_count || 0,
             cost: todayUsage?.cost_usd || 0
           },
-          thisMonth: {
-            translations: monthlyTotals.translations,
-            tts: monthlyTotals.tts,
-            cost: monthlyTotals.cost
-          },
+          thisMonth: monthlyTotals,
           weekly: weeklyUsage || []
         }
       })
     };
-
   } catch (error) {
     console.error('[Usage] 사용량 조회 처리 오류:', error);
     return {
@@ -792,12 +778,12 @@ async function handleGetUsage(headers) {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: false,
-        error: '사용량 조회 중 오류가 발생했습니다.'
+        error: `사용량 조회 중 오류가 발생했습니다: ${error.message}`
       })
     };
   }
 }
-// [끝]
+// [끝점]
 
 // 📊 월별 비용 조회 처리
 async function handleGetMonthlyCost(headers) {
