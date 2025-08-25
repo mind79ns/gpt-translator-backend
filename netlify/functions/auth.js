@@ -802,10 +802,12 @@ async function handleGetMonthlyCost(headers) {
 
 // auth.js
 
-// [시작점] 아래 함수 전체를 교체합니다.
-// 📊 대시보드 데이터 종합 조회 (안전한 순차 로딩 방식으로 변경)
+// auth.js
+
+// [시작점] 이 함수 전체를 교체하세요.
+// 📊 대시보드 데이터 종합 조회 (누락된 데이터 조회 로직이 추가된 최종 버전)
 async function handleGetDashboardData(headers) {
-  console.log('[Dashboard] 대시보드 데이터 조회 요청 (안전 모드)');
+  console.log('[Dashboard] 대시보드 데이터 조회 요청 (최종 버전)');
   
   const authResult = await verifyAuthToken(headers);
   if (!authResult.success) {
@@ -818,98 +820,78 @@ async function handleGetDashboardData(headers) {
 
   try {
     const userId = authResult.userId;
-    console.log('[Dashboard] 데이터 수집 시작 - 사용자:', userId);
-    
-    // 최종적으로 반환될 대시보드 데이터 객체
     const dashboardData = {
-      usage: {
-        daily: { translations: 0, cost: 0 },
-        monthly: { translations: 0, cost: 0 }
-      },
+      usage: { daily: { translations: 0, cost: 0 }, monthly: { translations: 0, cost: 0, saved: 0 } },
       apiKeys: { openai: false, google: false },
       vocabulary: { total: 0, studied: 0 },
-      user: { email: authResult.email || '', displayName: '' }
+      weekly: [],
+      monthlyChart: []
     };
 
-    // --- 1. API 키 상태 확인 ---
-    const [openaiKeyResult, googleKeyResult] = await Promise.all([
-      getUserApiKey(userId, 'openai'),
-      getUserApiKey(userId, 'google')
-    ]);
+    // 1. API 키 상태
+    const [openaiKeyResult, googleKeyResult] = await Promise.all([ getUserApiKey(userId, 'openai'), getUserApiKey(userId, 'google') ]);
     dashboardData.apiKeys.openai = openaiKeyResult.success && !!openaiKeyResult.apiKey;
     dashboardData.apiKeys.google = googleKeyResult.success && !!googleKeyResult.apiKey;
-    console.log('[Dashboard] API 키 확인 완료');
 
-    // --- 2. 단어장 통계 확인 ---
+    // 2. 단어장 통계
     const vocabResult = await getUserVocabulary(userId);
     if (vocabResult.success && vocabResult.vocabulary) {
       const vocabArray = Array.from(vocabResult.vocabulary.values());
       dashboardData.vocabulary.total = vocabArray.length;
       dashboardData.vocabulary.studied = vocabArray.filter(w => (w.correctCount || 0) > 0 || (w.wrongCount || 0) > 0).length;
     }
-    console.log('[Dashboard] 단어장 통계 확인 완료');
 
-    // --- 3. 사용량 통계 확인 ---
-    const today = new Date().toISOString().split('T')[0];
-    const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
-    const lastDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0];
+    // 3. 사용량 통계 (일간, 월간)
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-    // 오늘 사용량
-    const { data: dailyUsageData, error: dailyError } = await supabase
-      .from('usage_logs')
-      .select('translation_count, cost_usd')
-      .eq('user_id', userId)
-      .eq('date', today);
-    if (dailyError) throw dailyError;
-    
-    if (dailyUsageData && dailyUsageData.length > 0) {
-        dashboardData.usage.daily = dailyUsageData.reduce((acc, log) => {
-            acc.translations += log.translation_count || 0;
-            acc.cost += log.cost_usd || 0;
-            return acc;
-        }, { translations: 0, cost: 0 });
+    const { data: usageData, error: usageError } = await supabase
+      .from('usage_logs').select('date, translation_count, cost_usd').eq('user_id', userId).gte('date', firstDayOfMonth);
+    if (usageError) throw usageError;
+
+    if (usageData) {
+      usageData.forEach(log => {
+        if (log.date === today) {
+          dashboardData.usage.daily.translations += log.translation_count || 0;
+          dashboardData.usage.daily.cost += log.cost_usd || 0;
+        }
+        dashboardData.usage.monthly.translations += log.translation_count || 0;
+        dashboardData.usage.monthly.cost += log.cost_usd || 0;
+      });
     }
-    console.log('[Dashboard] 일일 사용량 확인 완료');
+
+    // 4. 주간 차트 데이터
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(now.getDate() - 6);
+    const { data: weeklyData, error: weeklyError } = await supabase
+      .from('usage_logs').select('date, translation_count').eq('user_id', userId).gte('date', sevenDaysAgo.toISOString().split('T')[0]);
+    if (weeklyError) throw weeklyError;
+    dashboardData.weekly = weeklyData || [];
+
+    // 5. 월별 비용 차트 데이터 (최근 6개월)
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    const { data: monthlyCostData, error: monthlyCostError } = await supabase
+      .from('usage_logs').select('date, cost_usd').eq('user_id', userId).gte('date', sixMonthsAgo.toISOString().split('T')[0]);
+    if (monthlyCostError) throw monthlyCostError;
     
-    // 월간 사용량
-    const { data: monthlyUsageData, error: monthlyError } = await supabase
-        .from('usage_logs')
-        .select('translation_count, cost_usd')
-        .eq('user_id', userId)
-        .gte('date', firstDayOfMonth)
-        .lte('date', lastDayOfMonth);
-    if (monthlyError) throw monthlyError;
-
-    if (monthlyUsageData && monthlyUsageData.length > 0) {
-        dashboardData.usage.monthly = monthlyUsageData.reduce((acc, log) => {
-            acc.translations += log.translation_count || 0;
-            acc.cost += log.cost_usd || 0;
-            return acc;
-        }, { translations: 0, cost: 0 });
+    const monthlyAggregates = {};
+    if (monthlyCostData) {
+      monthlyCostData.forEach(log => {
+        const month = log.date.substring(0, 7);
+        if (!monthlyAggregates[month]) monthlyAggregates[month] = 0;
+        monthlyAggregates[month] += log.cost_usd || 0;
+      });
     }
-    console.log('[Dashboard] 월간 사용량 확인 완료');
-
-    // --- 최종 데이터 반환 ---
-    console.log('[Dashboard] 모든 데이터 수집 완료:', dashboardData);
-    return {
-      statusCode: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        success: true,
-        data: dashboardData
-      })
-    };
+    dashboardData.monthlyChart = Object.entries(monthlyAggregates).map(([month, cost]) => ({ month, cost, monthLabel: new Date(month + '-02').toLocaleDateString('ko-KR', { month: 'short' }) }));
+    
+    console.log('[Dashboard] 최종 데이터 수집 완료:', dashboardData);
+    return { statusCode: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ success: true, data: dashboardData }) };
 
   } catch (error) {
-    console.error('[Dashboard] 데이터 조회 중 심각한 오류 발생:', error);
-    return {
-      statusCode: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        success: false,
-        error: `대시보드 데이터를 불러올 수 없습니다: ${error.message}`
-      })
-    };
+    console.error('[Dashboard] 최종 조회 오류:', error);
+    return { statusCode: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ success: false, error: `대시보드 조회 실패: ${error.message}` }) };
   }
 }
 // [끝점]
