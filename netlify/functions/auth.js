@@ -155,22 +155,13 @@ exports.handler = async function (event, context) {
   }
 };
 
-// 🔐 회원가입 처리 (개선)
+// auth.js
+
+// [시작점] 아래 함수 전체를 교체합니다.
+// 🔐 회원가입 처리 (Supabase 공식 방식으로 수정)
 async function handleRegister(email, password, displayName) {
   console.log(`[Auth] 회원가입 시도: ${email}`);
 
-  // Supabase 연결 체크
-    if (!supabase) {
-        return {
-            statusCode: 503,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                error: '데이터베이스 연결 실패. 관리자에게 문의하세요.' 
-            })
-        };
-    }
-    
-  // 🔧 개선: 입력값 유효성 검사 강화
   if (!email || !password) {
     return {
       statusCode: 400,
@@ -178,18 +169,6 @@ async function handleRegister(email, password, displayName) {
       body: JSON.stringify({ error: '이메일과 비밀번호가 필요합니다.' })
     };
   }
-
-  // 이메일 형식 검증
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    return {
-      statusCode: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: '올바른 이메일 형식이 아닙니다.' })
-    };
-  }
-
-  // 비밀번호 강도 검증
   if (password.length < 8) {
     return {
       statusCode: 400,
@@ -198,87 +177,51 @@ async function handleRegister(email, password, displayName) {
     };
   }
 
-  // 🔧 추가: 비밀번호 복잡성 검사
-  const hasUpperCase = /[A-Z]/.test(password);
-  const hasLowerCase = /[a-z]/.test(password);
-  const hasNumbers = /\d/.test(password);
-  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
-
-  const complexityScore = [hasUpperCase, hasLowerCase, hasNumbers, hasSpecialChar].filter(Boolean).length;
-  
-  if (complexityScore < 2) {
-    return {
-      statusCode: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        error: '비밀번호는 대소문자, 숫자, 특수문자 중 최소 2가지를 포함해야 합니다.' 
-      })
-    };
-  }
-
-  // 표시명 길이 제한
-  if (displayName && displayName.length > 50) {
-    return {
-      statusCode: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: '표시명은 50자를 초과할 수 없습니다.' })
-    };
-  }
-
   try {
-    const result = await createUser(email.toLowerCase().trim(), password, displayName?.trim() || null);
-
-    if (result.success) {
-      console.log(`[Auth] 회원가입 성공: ${email} (ID: ${result.user.id})`);
-      
-      // 🔧 개선: 민감한 정보 제외하고 응답
-      return {
-        statusCode: 201,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          success: true,
-          message: '회원가입이 완료되었습니다.',
-          user: {
-            id: result.user.id,
-            email: result.user.email,
-            displayName: result.user.display_name,
-            createdAt: result.user.created_at
-          }
-        })
-      };
-    } else {
-      console.log(`[Auth] 회원가입 실패: ${result.error}`);
-      
-      // 🔧 개선: 에러 메시지 사용자 친화적으로 변환
-      let errorMessage = result.error;
-      if (result.error.includes('duplicate key value violates unique constraint')) {
-        errorMessage = '이미 등록된 이메일 주소입니다.';
-      } else if (result.error.includes('invalid input syntax')) {
-        errorMessage = '입력 형식이 올바르지 않습니다.';
+    // 💡 supabase.auth.signUp 공식 함수를 사용하여 auth.users에 사용자를 생성합니다.
+    const { data, error } = await supabase.auth.signUp({
+      email: email.toLowerCase().trim(),
+      password: password,
+      options: {
+        // displayName을 user_metadata에 저장합니다.
+        data: {
+          display_name: displayName?.trim() || email.split('@')[0]
+        }
       }
-      
+    });
+
+    if (error) {
+      // 회원가입 실패 시 Supabase가 제공하는 에러를 반환합니다.
+      console.error(`[Auth] 회원가입 실패:`, error.message);
       return {
         statusCode: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          success: false, 
-          error: errorMessage 
-        })
+        body: JSON.stringify({ success: false, error: error.message })
       };
     }
 
+    // 성공 시, data.user 객체에는 올바른 UUID를 가진 사용자가 포함됩니다.
+    console.log(`[Auth] 회원가입 성공: ${data.user.email} (ID: ${data.user.id})`);
+    return {
+      statusCode: 201,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: true,
+        message: '회원가입이 완료되었습니다. 이메일을 확인하여 계정을 활성화해주세요.',
+        user: data.user
+      })
+    };
+
   } catch (error) {
-    console.error('[Auth] 회원가입 처리 오류:', error);
+    console.error('[Auth] 회원가입 처리 중 심각한 오류:', error);
     return {
       statusCode: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        success: false, 
-        error: '회원가입 처리 중 오류가 발생했습니다.' 
-      })
+      body: JSON.stringify({ success: false, error: '회원가입 처리 중 오류가 발생했습니다.' })
     };
   }
 }
+// [끝점]
 
 // 🔐 로그인 처리 (개선)
 async function handleLogin(event, email, password) { // 👈 event 인자 추가
