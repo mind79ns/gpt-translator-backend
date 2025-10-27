@@ -12,11 +12,12 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || '';
 if (!supabaseUrl || !supabaseServiceKey) {
   console.error('[Database] 필수 환경변수 누락:', {
     SUPABASE_URL: !!supabaseUrl,
-    SUPABASE_SERVICE_KEY: !!supabaseServiceKey
+    SUPABASE_SERVICE_KEY: !!supabaseServiceKey,
+    SUPABASE_ANON_KEY: !!process.env.SUPABASE_ANON_KEY
   });
 }
 
-const supabase = (supabaseUrl && supabaseServiceKey) 
+const supabase = (supabaseUrl && supabaseServiceKey)
   ? createClient(supabaseUrl, supabaseServiceKey)
   : null;
 

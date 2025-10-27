@@ -102,14 +102,24 @@ exports.handler = async function (event, context) {
 // 🔐 회원가입 처리 (개선)
 async function handleRegister(email, password, displayName) {
   console.log(`[Auth] 회원가입 시도: ${email}`);
+  console.log(`[Auth] Supabase 상태:`, {
+    supabaseExists: !!supabase,
+    url: process.env.SUPABASE_URL ? '설정됨' : '누락',
+    serviceKey: process.env.SUPABASE_SERVICE_KEY ? '설정됨' : '누락'
+  });
 
   // Supabase 연결 체크
     if (!supabase) {
+        console.error('[Auth] Critical: Supabase is null - 환경변수 확인 필요');
         return {
             statusCode: 503,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                error: '데이터베이스 연결 실패. 관리자에게 문의하세요.' 
+            body: JSON.stringify({
+                error: '데이터베이스 연결 실패. 관리자에게 문의하세요.',
+                debug: {
+                  supabaseUrl: !!process.env.SUPABASE_URL,
+                  supabaseKey: !!process.env.SUPABASE_SERVICE_KEY
+                }
             })
         };
     }
@@ -170,11 +180,13 @@ async function handleRegister(email, password, displayName) {
   }
 
   try {
+    console.log(`[Auth] createUser 함수 호출 시작`);
     const result = await createUser(email.toLowerCase().trim(), password, displayName?.trim() || null);
+    console.log(`[Auth] createUser 결과:`, { success: result.success, hasUser: !!result.user, error: result.error });
 
     if (result.success) {
       console.log(`[Auth] 회원가입 성공: ${email} (ID: ${result.user.id})`);
-      
+
       // 🔧 개선: 민감한 정보 제외하고 응답
       return {
         statusCode: 201,
@@ -191,8 +203,8 @@ async function handleRegister(email, password, displayName) {
         })
       };
     } else {
-      console.log(`[Auth] 회원가입 실패: ${result.error}`);
-      
+      console.error(`[Auth] 회원가입 실패: ${result.error}`);
+
       // 🔧 개선: 에러 메시지 사용자 친화적으로 변환
       let errorMessage = result.error;
       if (result.error.includes('duplicate key value violates unique constraint')) {
@@ -200,13 +212,14 @@ async function handleRegister(email, password, displayName) {
       } else if (result.error.includes('invalid input syntax')) {
         errorMessage = '입력 형식이 올바르지 않습니다.';
       }
-      
+
       return {
         statusCode: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          success: false, 
-          error: errorMessage 
+        body: JSON.stringify({
+          success: false,
+          error: errorMessage,
+          debugError: result.error // 디버깅용
         })
       };
     }
@@ -216,9 +229,10 @@ async function handleRegister(email, password, displayName) {
     return {
       statusCode: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        success: false, 
-        error: '회원가입 처리 중 오류가 발생했습니다.' 
+      body: JSON.stringify({
+        success: false,
+        error: '회원가입 처리 중 오류가 발생했습니다.',
+        debugError: error.message // 디버깅용
       })
     };
   }
@@ -249,9 +263,16 @@ async function handleLogin(event, email, password) { // 👈 event 인자 추가
 
   const clientIP = event.headers['x-forwarded-for'] || event.headers['x-real-ip'] || 'unknown';
   console.log(`[Auth] 로그인 시도 - IP: ${clientIP}, Email: ${email}`);
+  console.log(`[Auth] Supabase 상태:`, {
+    supabaseExists: !!supabase,
+    url: process.env.SUPABASE_URL ? '설정됨' : '누락',
+    serviceKey: process.env.SUPABASE_SERVICE_KEY ? '설정됨' : '누락'
+  });
 
   try {
+    console.log(`[Auth] authenticateUser 함수 호출 시작`);
     const result = await authenticateUser(email.toLowerCase().trim(), password);
+    console.log(`[Auth] authenticateUser 결과:`, { success: result.success, hasUser: !!result.user, error: result.error });
 
     if (result.success) {
       console.log(`[Auth] 로그인 성공: ${email} (ID: ${result.user.id})`);
@@ -274,15 +295,16 @@ async function handleLogin(event, email, password) { // 👈 event 인자 추가
         })
       };
     } else {
-      console.log(`[Auth] 로그인 실패: ${email} - ${result.error} (IP: ${clientIP})`);
-      
-      // 🔧 보안: 구체적인 실패 이유 숨기기
+      console.error(`[Auth] 로그인 실패: ${email} - ${result.error} (IP: ${clientIP})`);
+
+      // 🔧 보안: 구체적인 실패 이유 숨기기 (디버깅 정보는 포함)
       return {
         statusCode: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          success: false, 
-          error: '이메일 또는 비밀번호가 올바르지 않습니다.' 
+        body: JSON.stringify({
+          success: false,
+          error: '이메일 또는 비밀번호가 올바르지 않습니다.',
+          debugError: result.error // 디버깅용
         })
       };
     }
