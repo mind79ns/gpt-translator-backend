@@ -533,6 +533,19 @@ button:hover {
     margin-top: 5px;
 }
 
+/* 품질 설정 래퍼 - grid 레이아웃 무시 */
+.quality-setting-wrapper {
+    display: block !important;
+    grid-template-columns: unset !important;
+}
+
+.quality-setting-grid {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 15px;
+}
+
 /* 옵션 1: 실시간 모델 정보 표시 */
 .model-info-display {
     display: flex;
