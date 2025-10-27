@@ -84,6 +84,15 @@ async function createUser(email, password, displayName = null) {
 }
 
 async function authenticateUser(email, password) {
+  // 🔧 방어 코드: Supabase 연결 확인
+  if (!supabase) {
+    console.error('[Auth] Critical: Supabase client is not initialized. Check environment variables.');
+    return {
+      success: false,
+      error: '데이터베이스 연결 실패. 환경변수를 확인하세요. (SUPABASE_URL, SUPABASE_SERVICE_KEY)'
+    };
+  }
+
   try {
     const { data: user, error } = await supabase
       .from('users')
@@ -130,6 +139,11 @@ async function authenticateUser(email, password) {
 }
 
 async function verifyToken(token) {
+  // 🔧 방어 코드: Supabase 연결 확인 (토큰 검증에는 필요 없지만 일관성을 위해)
+  if (!supabase) {
+    console.error('[Auth] Warning: Supabase client is not initialized during token verification.');
+  }
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default-jwt-secret');
     return { success: true, userId: decoded.userId, email: decoded.email };
@@ -140,6 +154,12 @@ async function verifyToken(token) {
 
 // API 키 관리 함수들
 async function saveUserApiKey(userId, apiKey, keyName = 'My API Key', provider = 'openai') {
+  // 🔧 방어 코드: Supabase 연결 확인
+  if (!supabase) {
+    console.error('[API Keys] Critical: Supabase client is not initialized.');
+    return { success: false, error: '데이터베이스 연결 실패. 환경변수를 확인하세요.' };
+  }
+
   try {
     const encryptedKey = encryptApiKey(apiKey);
     
@@ -174,6 +194,12 @@ async function saveUserApiKey(userId, apiKey, keyName = 'My API Key', provider =
 }
 
 async function getUserApiKey(userId, provider = 'openai') {
+  // 🔧 방어 코드: Supabase 연결 확인
+  if (!supabase) {
+    console.error('[API Keys] Critical: Supabase client is not initialized.');
+    return { success: false, error: '데이터베이스 연결 실패. 환경변수를 확인하세요.' };
+  }
+
   try {
     const { data, error } = await supabase
       .from('user_api_keys')
@@ -211,6 +237,12 @@ async function getUserApiKey(userId, provider = 'openai') {
 
 // 사용량 추적 함수들
 async function trackUsage(userId, type, count = 1, cost = 0, provider = 'openai') {
+  // 🔧 방어 코드: Supabase 연결 확인
+  if (!supabase) {
+    console.error('[Usage] Critical: Supabase client is not initialized.');
+    return { success: false, error: '데이터베이스 연결 실패. 환경변수를 확인하세요.' };
+  }
+
   try {
     const today = new Date().toISOString().split('T')[0];
 
