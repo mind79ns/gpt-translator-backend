@@ -578,18 +578,6 @@ button:hover {
     color: var(--text-secondary);
 }
 
-/* 옵션 3: 번역 결과에 모델 정보 표시 */
-.translation-model-info {
-    display: inline-block;
-    margin-left: 8px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-size: 10px;
-    background: var(--ai-purple);
-    color: white;
-    font-weight: normal;
-}
-
 .style-buttons {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
