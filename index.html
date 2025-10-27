@@ -3405,7 +3405,10 @@ function loadAISettings() {
             els.translateBtnText.textContent = aiContextMode ? 'AI 번역' : '번역하기';
             els.aiSettingsSection.style.display = aiContextMode ? 'block' : 'none';
             els.qualitySlider.value = qualityLevel;
-            
+
+            // 모델 정보 표시 초기화
+            updateModelInfo(qualityLevel);
+
             // 스타일 버튼 업데이트
             document.querySelectorAll('.style-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.style === currentTranslationStyle);
