@@ -241,8 +241,9 @@ Rules:
 
   const userPrompt = `Text: """${inputText}"""`;
 
+  // 💰 비용 최적화: gpt-4o → gpt-4o-mini (비용 94% 절감, 품질 유사)
   const payload = {
-    model: "gpt-4o",
+    model: "gpt-4o-mini",
     messages: [
       { role: "system", content: systemMessage },
       { role: "user", content: userPrompt }
