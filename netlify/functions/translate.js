@@ -23,8 +23,62 @@ const {
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const GOOGLE_TTS_API_KEY = process.env.GOOGLE_TTS_API_KEY || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''; // 🔵 Gemini API 키
 const MAX_INPUT_CHARS = 6000;
 const TRANSLATION_CACHE_TTL_MS = 1000 * 60 * 60;
+
+// 🔵 Gemini 2.0 Flash 번역 함수
+async function translateWithGemini(text, sourceLang, targetLang, getPronunciation = false, apiKey = GEMINI_API_KEY) {
+  if (!apiKey) {
+    throw new Error('Gemini API key not configured');
+  }
+
+  const prompt = getPronunciation
+    ? `Translate the following ${sourceLang} text to ${targetLang}. Return ONLY valid JSON with exactly two keys: "translation" (the translated text) and "pronunciation_hangul" (Korean phonetic transcription of the ${targetLang} translation).
+
+Text to translate: "${text}"`
+    : `Translate the following ${sourceLang} text to ${targetLang}. Return ONLY the translated text without any explanation or formatting.
+
+Text to translate: "${text}"`;
+
+  const response = await fetchFn(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 2000
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+  if (getPronunciation) {
+    // JSON 파싱 시도
+    try {
+      const jsonMatch = resultText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      // 파싱 실패 시 기본 형식 반환
+    }
+    return { translation: resultText, pronunciation_hangul: '' };
+  }
+
+  return { translation: resultText.trim(), pronunciation_hangul: '' };
+}
 
 const translationCache = new Map();
 
@@ -549,7 +603,9 @@ exports.handler = async function (event, context) {
       // 🧠 새로운 AI 문맥 번역 파라미터들
       useAIContext = false,
       contextualPrompt = null,
-      qualityLevel = 3
+      qualityLevel = 3,
+      // 🤖 AI 모델 선택 파라미터
+      model = 'auto' // auto, gpt-4.1, gpt-4.1-mini, gemini-2.0-flash
     } = JSON.parse(event.body || '{}');
 
     if (!OPENAI_API_KEY) {
@@ -580,29 +636,63 @@ exports.handler = async function (event, context) {
       console.log(`[Translation] ${isUserKey ? '사용자' : '시스템'} API 키 사용, 모드: ${useAIContext ? 'AI' : '일반'}`);
 
       let result;
+      let usedModel = model;
+      let modelProvider = 'openai';
 
       try {
-        // 🧠 AI 문맥 번역 vs 일반 번역 분기
-        if (useAIContext && contextualPrompt) {
-          console.log('[Translation] AI 문맥 번역 모드, 품질 레벨:', qualityLevel);
-          result = await translateWithAIContext(
-            inputText,
-            targetLang,
-            contextualPrompt,
-            qualityLevel,
-            getPronunciation,
-            apiKeyToUse
-          );
-        } else {
-          console.log('[Translation] 일반 번역 모드');
-          result = await translateAndPronounceSingleCall(inputText, targetLang, getPronunciation, apiKeyToUse);
+        // 🤖 모델 자동 선택 (하이브리드 모드)
+        if (model === 'auto') {
+          const charCount = inputText.length;
+          if (charCount < 100 && GEMINI_API_KEY) {
+            usedModel = 'gemini-2.0-flash';
+          } else if (charCount < 500) {
+            usedModel = 'gpt-4.1-mini';
+          } else {
+            usedModel = 'gpt-4.1';
+          }
+          console.log(`[Model] 자동 선택: ${usedModel} (텍스트 길이: ${charCount}자)`);
         }
 
-        // 🔧 개선: 사용량 추적 강화
+        // 🔵 Gemini 모델 사용
+        if (usedModel === 'gemini-2.0-flash') {
+          modelProvider = 'google';
+          const geminiApiKey = userApiKeys?.google || GEMINI_API_KEY;
+
+          if (!geminiApiKey) {
+            console.log('[Model] Gemini API 키 없음, GPT로 대체');
+            usedModel = 'gpt-4.1-mini';
+          } else {
+            console.log('[Translation] Gemini 2.0 Flash 번역 모드');
+            const sourceLanguage = detectSourceLanguage(inputText);
+            result = await translateWithGemini(inputText, sourceLanguage, targetLang, getPronunciation, geminiApiKey);
+          }
+        }
+
+        // 🟢 OpenAI 모델 사용 (Gemini 미사용 또는 대체 시)
+        if (!result) {
+          modelProvider = 'openai';
+          if (useAIContext && contextualPrompt) {
+            console.log('[Translation] AI 문맥 번역 모드, 품질 레벨:', qualityLevel);
+            result = await translateWithAIContext(
+              inputText,
+              targetLang,
+              contextualPrompt,
+              qualityLevel,
+              getPronunciation,
+              apiKeyToUse
+            );
+          } else {
+            console.log('[Translation] 일반 번역 모드');
+            result = await translateAndPronounceSingleCall(inputText, targetLang, getPronunciation, apiKeyToUse);
+          }
+        }
+
+        // 🔧 개선: 사용량 추적 강화 (모델별 비용 계산)
         if (userId) {
-          const cost = inputText.length * 0.000015; // OpenAI 요금 계산
-          await trackUsage(userId, 'translation', inputText.length, cost, 'openai');
-          console.log(`[Usage] 사용량 추적: ${inputText.length}자, 비용: $${cost.toFixed(6)}`);
+          const costPerChar = modelProvider === 'google' ? 0.000005 : 0.000015;
+          const cost = inputText.length * costPerChar;
+          await trackUsage(userId, 'translation', inputText.length, cost, modelProvider);
+          console.log(`[Usage] ${modelProvider} 사용량: ${inputText.length}자, 비용: $${cost.toFixed(6)}`);
         }
 
         // 문장 분할 추가
@@ -615,8 +705,10 @@ exports.handler = async function (event, context) {
           result.qualityLevel = qualityLevel;
         }
 
-        // 🔧 추가: 응답에 사용된 API 키 정보 포함
+        // 🔧 추가: 응답에 사용된 API 키 및 모델 정보 포함
         result.usedUserKey = isUserKey;
+        result.usedModel = usedModel;
+        result.modelProvider = modelProvider;
 
         return {
           statusCode: 200,
