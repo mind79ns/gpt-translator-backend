@@ -18,7 +18,9 @@ const {
   getUserApiKey,
   trackUsage,
   getPublicCache,
-  setPublicCache
+  setPublicCache,
+  saveFeedback,
+  getRelevantFeedback
 } = require('./database');
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
@@ -697,6 +699,35 @@ exports.handler = async function (event, context) {
       throw new Error("서버 설정 오류: OPENAI_API_KEY가 없습니다.");
     }
 
+    // 📝 번역 피드백 저장 액션
+    if (action === 'save-feedback') {
+      if (!userId) {
+        return {
+          statusCode: 401,
+          headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: '피드백 저장은 로그인이 필요합니다.' })
+        };
+      }
+
+      const { originalText, originalTranslation, correctedTranslation, feedbackTargetLang } = JSON.parse(event.body || '{}');
+
+      if (!originalText || !correctedTranslation || !feedbackTargetLang) {
+        return {
+          statusCode: 400,
+          headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: '필수 파라미터가 누락되었습니다.' })
+        };
+      }
+
+      const result = await saveFeedback(userId, originalText, originalTranslation, correctedTranslation, feedbackTargetLang);
+
+      return {
+        statusCode: result.success ? 200 : 500,
+        headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify(result)
+      };
+    }
+
     if (action === 'translate') {
       if (!inputText || !targetLang) {
         return {
@@ -723,6 +754,30 @@ exports.handler = async function (event, context) {
       let result;
       let usedModel = model;
       let modelProvider = 'openai';
+
+      // 📝 피드백 학습: 저장된 수정 사항 확인
+      if (userId) {
+        const feedbackResult = await getRelevantFeedback(inputText, targetLang, userId);
+        if (feedbackResult.success && feedbackResult.feedback) {
+          console.log(`[Feedback] ${feedbackResult.matchType === 'exact' ? '정확한' : '유사'} 피드백 적용`);
+
+          const chunks = splitIntoSentences(feedbackResult.feedback.corrected_translation);
+          return {
+            statusCode: 200,
+            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              translation: feedbackResult.feedback.corrected_translation,
+              pronunciation_hangul: '',
+              chunks: chunks,
+              usedUserKey: isUserKey,
+              usedModel: 'feedback',
+              modelProvider: 'user-feedback',
+              feedbackApplied: true,
+              feedbackMatchType: feedbackResult.matchType
+            })
+          };
+        }
+      }
 
       try {
         // 🤖 모델 자동 선택 (하이브리드 모드)

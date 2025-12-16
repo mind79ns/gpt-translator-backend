@@ -55,7 +55,7 @@ function decryptApiKey(encryptedKey) {
 async function createUser(email, password, displayName = null) {
   try {
     const hashedPassword = await bcrypt.hash(password, 12);
-    
+
     const { data: user, error: userError } = await supabase
       .from('users')
       .insert([
@@ -101,7 +101,7 @@ async function authenticateUser(email, password) {
       .eq('email', email.toLowerCase())
       .single();
 
-   if (error || !user) {
+    if (error || !user) {
       return { success: false, error: '사용자를 찾을 수 없습니다.' };
     }
 
@@ -123,15 +123,15 @@ async function authenticateUser(email, password) {
       { expiresIn: '7d' }
     );
 
-    return { 
-      success: true, 
-      user: { 
-        id: user.id, 
-        email: user.email, 
+    return {
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
         displayName: user.display_name,
-        isPremium: user.is_premium 
-      }, 
-      token 
+        isPremium: user.is_premium
+      },
+      token
     };
   } catch (error) {
     console.error('사용자 인증 실패:', error);
@@ -163,7 +163,7 @@ async function saveUserApiKey(userId, apiKey, keyName = 'My API Key', provider =
 
   try {
     const encryptedKey = encryptApiKey(apiKey);
-    
+
     const insertData = {
       user_id: userId,
       key_name: keyName,
@@ -178,9 +178,9 @@ async function saveUserApiKey(userId, apiKey, keyName = 'My API Key', provider =
 
     const { data, error } = await supabase
       .from('user_api_keys')
-      .upsert([insertData], { 
+      .upsert([insertData], {
         onConflict: 'user_id',
-        ignoreDuplicates: false 
+        ignoreDuplicates: false
       })
       .select()
       .single();
@@ -301,7 +301,7 @@ function generateCacheKey(sourceText, targetLang) {
 async function getPublicCache(sourceText, targetLang) {
   try {
     const hashKey = generateCacheKey(sourceText, targetLang);
-    
+
     const { data, error } = await supabase
       .from('public_cache')
       .select('*')
@@ -315,14 +315,14 @@ async function getPublicCache(sourceText, targetLang) {
     // 히트 카운트 증가
     await supabase
       .from('public_cache')
-      .update({ 
+      .update({
         hit_count: data.hit_count + 1,
         updated_at: new Date().toISOString()
       })
       .eq('id', data.id);
 
-    return { 
-      success: true, 
+    return {
+      success: true,
       data: {
         translation: data.translation,
         pronunciation: data.pronunciation,
@@ -338,7 +338,7 @@ async function getPublicCache(sourceText, targetLang) {
 async function setPublicCache(sourceText, targetLang, translation, pronunciation = '') {
   try {
     const hashKey = generateCacheKey(sourceText, targetLang);
-    
+
     const { error } = await supabase
       .from('public_cache')
       .upsert([{
@@ -363,6 +363,121 @@ async function setPublicCache(sourceText, targetLang, translation, pronunciation
   }
 }
 
+// 📝 번역 피드백 학습 함수들
+async function saveFeedback(userId, originalText, originalTranslation, correctedTranslation, targetLang) {
+  if (!supabase) {
+    console.error('[Feedback] Critical: Supabase client is not initialized.');
+    return { success: false, error: '데이터베이스 연결 실패.' };
+  }
+
+  try {
+    const hashKey = crypto.createHash('sha256').update(`${originalText}:${targetLang}`).digest('hex');
+
+    const { data, error } = await supabase
+      .from('translation_feedback')
+      .upsert([{
+        user_id: userId,
+        hash_key: hashKey,
+        original_text: originalText,
+        target_lang: targetLang,
+        original_translation: originalTranslation,
+        corrected_translation: correctedTranslation,
+        updated_at: new Date().toISOString()
+      }], {
+        onConflict: 'hash_key,user_id',
+        ignoreDuplicates: false
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`[Feedback] 피드백 저장 완료: "${originalText.substring(0, 30)}..."`);
+    return { success: true, data };
+  } catch (error) {
+    console.error('피드백 저장 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function getRelevantFeedback(originalText, targetLang, userId = null) {
+  if (!supabase) {
+    return { success: false, error: '데이터베이스 연결 실패.' };
+  }
+
+  try {
+    const hashKey = crypto.createHash('sha256').update(`${originalText}:${targetLang}`).digest('hex');
+
+    // 정확히 일치하는 피드백 먼저 조회
+    let query = supabase
+      .from('translation_feedback')
+      .select('*')
+      .eq('hash_key', hashKey);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data: exactMatch, error: exactError } = await query.single();
+
+    if (exactMatch && !exactError) {
+      console.log(`[Feedback] 정확한 피드백 발견: "${originalText.substring(0, 20)}..."`);
+      return {
+        success: true,
+        feedback: exactMatch,
+        matchType: 'exact'
+      };
+    }
+
+    // 유사 문장 피드백 조회 (최근 50개에서 검색)
+    let recentQuery = supabase
+      .from('translation_feedback')
+      .select('*')
+      .eq('target_lang', targetLang)
+      .order('updated_at', { ascending: false })
+      .limit(50);
+
+    if (userId) {
+      recentQuery = recentQuery.eq('user_id', userId);
+    }
+
+    const { data: recentFeedback, error: recentError } = await recentQuery;
+
+    if (recentFeedback && recentFeedback.length > 0) {
+      // 간단한 유사도 검사 (공통 단어 비율)
+      const inputWords = new Set(originalText.toLowerCase().split(/\s+/));
+      let bestMatch = null;
+      let bestScore = 0;
+
+      for (const feedback of recentFeedback) {
+        const feedbackWords = new Set(feedback.original_text.toLowerCase().split(/\s+/));
+        const intersection = [...inputWords].filter(w => feedbackWords.has(w));
+        const score = intersection.length / Math.max(inputWords.size, feedbackWords.size);
+
+        if (score > 0.5 && score > bestScore) {
+          bestScore = score;
+          bestMatch = feedback;
+        }
+      }
+
+      if (bestMatch) {
+        console.log(`[Feedback] 유사 피드백 발견 (${(bestScore * 100).toFixed(0)}% 일치)`);
+        return {
+          success: true,
+          feedback: bestMatch,
+          matchType: 'similar',
+          matchScore: bestScore
+        };
+      }
+    }
+
+    return { success: false, error: '관련 피드백 없음' };
+  } catch (error) {
+    console.error('피드백 조회 실패:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   supabase,
   createUser,
@@ -374,5 +489,7 @@ module.exports = {
   getPublicCache,
   setPublicCache,
   encryptApiKey,
-  decryptApiKey
+  decryptApiKey,
+  saveFeedback,
+  getRelevantFeedback
 };
