@@ -104,6 +104,89 @@ function detectSourceLanguage(text) {
   return "English";
 }
 
+// 🏭 제조 자동화 전문 용어 사전
+const manufacturingTerminology = {
+  // 전자 부품 실장
+  'SMD': { ko: 'SMD (에스엠디)', vi: 'SMD' },
+  'IMT': { ko: 'IMT (아이엠티)', vi: 'IMT' },
+  'RADIAL': { ko: '라디알', vi: 'RADIAL' },
+  'AXIAL': { ko: '엑시알', vi: 'AXIAL' },
+  'EYELET': { ko: '아일렛', vi: 'EYELET' },
+  'FEEDER': { ko: '피더', vi: 'Feeder' },
+  'MASK': { ko: '마스크', vi: 'Mask' },
+
+  // 생산 관련
+  'insertion': { ko: '삽입', vi: 'Chèn' },
+  'no insertion': { ko: '무삽', vi: 'Không chèn' },
+  'loss': { ko: '유실', vi: 'Thất thoát' },
+  'efficiency': { ko: '효율', vi: 'Hiệu suất' },
+  'yield': { ko: '수율', vi: 'Tỷ lệ đạt' },
+  'defect rate': { ko: '불량률', vi: 'Tỷ lệ lỗi' },
+  'throughput': { ko: '처리량', vi: 'Năng suất' },
+  'downtime': { ko: '비가동시간', vi: 'Thời gian dừng máy' },
+
+  // 설비 관련
+  'PLC': { ko: 'PLC', vi: 'PLC' },
+  'HMI': { ko: 'HMI', vi: 'HMI' },
+  'SCADA': { ko: '스카다', vi: 'SCADA' },
+  'MES': { ko: '생산실행시스템', vi: 'Hệ thống MES' },
+  'ERP': { ko: '전사적자원관리', vi: 'Hệ thống ERP' },
+  'OEE': { ko: '설비종합효율', vi: 'Hiệu suất thiết bị tổng thể' },
+  'conveyor': { ko: '컨베이어', vi: 'Băng tải' },
+  'sensor': { ko: '센서', vi: 'Cảm biến' },
+  'actuator': { ko: '액추에이터', vi: 'Bộ truyền động' },
+
+  // 품질/정비 관련
+  'quality control': { ko: '품질관리', vi: 'Kiểm soát chất lượng' },
+  'preventive maintenance': { ko: '예방정비', vi: 'Bảo trì phòng ngừa' },
+  'predictive maintenance': { ko: '예측정비', vi: 'Bảo trì dự đoán' },
+  'assembly line': { ko: '조립라인', vi: 'Dây chuyền lắp ráp' },
+  'work order': { ko: '작업지시', vi: 'Lệnh sản xuất' },
+  'lot': { ko: '로트', vi: 'Lô' },
+  'batch': { ko: '배치', vi: 'Lô sản xuất' }
+};
+
+// 🏭 제조 자동화 전문 프롬프트
+const domainPrompts = {
+  manufacturing: `You are an expert translator specializing in MANUFACTURING AUTOMATION and ELECTRONICS ASSEMBLY.
+
+CRITICAL TERMINOLOGY RULES:
+- SMD = SMD (에스엠디/SMD) - Surface Mount Device
+- IMT = IMT (아이엠티/IMT) - Insert Mount Technology  
+- RADIAL = 라디알/RADIAL - Radial component
+- AXIAL = 엑시알/AXIAL - Axial component
+- EYELET = 아일렛/EYELET - Metal eyelet
+- FEEDER = 피더/Feeder - Component feeder
+- MASK = 마스크/Mask - Solder mask
+- 삽입/Chèn = insertion
+- 무삽/Không chèn = no insertion
+- 유실/Thất thoát = loss/missing
+- 효율/Hiệu suất = efficiency
+- PLC, HMI, SCADA, MES, OEE = Keep as abbreviations
+
+Maintain technical accuracy. Use industry-standard terminology.
+Preserve all product codes, model numbers, and measurements exactly as-is.`,
+
+  general: '' // 일반 모드는 추가 프롬프트 없음
+};
+
+// 🏭 도메인별 용어 적용 함수
+function applyDomainTerminology(text, domain, targetLang) {
+  if (domain !== 'manufacturing') return text;
+
+  let result = text;
+  const langKey = targetLang.toLowerCase().includes('korean') ? 'ko' :
+    targetLang.toLowerCase().includes('vietnam') ? 'vi' : null;
+
+  if (langKey) {
+    for (const [term, translations] of Object.entries(manufacturingTerminology)) {
+      const regex = new RegExp(`\\b${term}\\b`, 'gi');
+      result = result.replace(regex, translations[langKey] || term);
+    }
+  }
+  return result;
+}
+
 async function retryWithBackoff(fn, attempts = 3, baseDelay = 300) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
@@ -605,7 +688,9 @@ exports.handler = async function (event, context) {
       contextualPrompt = null,
       qualityLevel = 3,
       // 🤖 AI 모델 선택 파라미터
-      model = 'auto' // auto, gpt-4.1, gpt-4.1-mini, gemini-2.0-flash
+      model = 'auto', // auto, gpt-4.1, gpt-4.1-mini, gemini-2.0-flash
+      // 🏭 전문 분야 모드
+      domain = 'general' // general, manufacturing
     } = JSON.parse(event.body || '{}');
 
     if (!OPENAI_API_KEY) {
@@ -678,12 +763,31 @@ exports.handler = async function (event, context) {
         // 🟢 OpenAI 모델 사용 (Gemini 미사용 또는 대체 시)
         if (!result) {
           modelProvider = 'openai';
-          if (useAIContext && contextualPrompt) {
+
+          // 🏭 제조 자동화 모드: 도메인 프롬프트 추가
+          let enhancedPrompt = contextualPrompt || '';
+          if (domain === 'manufacturing' && domainPrompts.manufacturing) {
+            enhancedPrompt = domainPrompts.manufacturing + '\n\n' + enhancedPrompt;
+            console.log('[Translation] 제조 자동화 전문 모드 활성화');
+          }
+
+          if (useAIContext && enhancedPrompt) {
             console.log('[Translation] AI 문맥 번역 모드, 품질 레벨:', qualityLevel);
             result = await translateWithAIContext(
               inputText,
               targetLang,
-              contextualPrompt,
+              enhancedPrompt,
+              qualityLevel,
+              getPronunciation,
+              apiKeyToUse
+            );
+          } else if (domain === 'manufacturing') {
+            // 일반 번역이지만 제조 모드일 때
+            console.log('[Translation] 제조 자동화 일반 번역 모드');
+            result = await translateWithAIContext(
+              inputText,
+              targetLang,
+              domainPrompts.manufacturing,
               qualityLevel,
               getPronunciation,
               apiKeyToUse
@@ -691,6 +795,11 @@ exports.handler = async function (event, context) {
           } else {
             console.log('[Translation] 일반 번역 모드');
             result = await translateAndPronounceSingleCall(inputText, targetLang, getPronunciation, apiKeyToUse);
+          }
+
+          // 🏭 제조 용어 후처리 적용
+          if (domain === 'manufacturing' && result && result.translation) {
+            result.translation = applyDomainTerminology(result.translation, domain, targetLang);
           }
         }
 
