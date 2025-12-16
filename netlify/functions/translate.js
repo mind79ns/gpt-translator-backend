@@ -662,9 +662,16 @@ exports.handler = async function (event, context) {
             console.log('[Model] Gemini API 키 없음, GPT로 대체');
             usedModel = 'gpt-4.1-mini';
           } else {
-            console.log('[Translation] Gemini 2.0 Flash 번역 모드');
-            const sourceLanguage = detectSourceLanguage(inputText);
-            result = await translateWithGemini(inputText, sourceLanguage, targetLang, getPronunciation, geminiApiKey);
+            try {
+              console.log('[Translation] Gemini 2.0 Flash 번역 모드');
+              const sourceLanguage = detectSourceLanguage(inputText);
+              result = await translateWithGemini(inputText, sourceLanguage, targetLang, getPronunciation, geminiApiKey);
+            } catch (geminiError) {
+              console.log('[Model] Gemini 오류, GPT로 대체:', geminiError.message);
+              usedModel = 'gpt-4.1-mini';
+              modelProvider = 'openai';
+              result = null; // GPT 폴백 트리거
+            }
           }
         }
 
