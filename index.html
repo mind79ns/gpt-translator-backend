@@ -1,12 +1,62 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>GPT 양방향 음성 번역기 Pro v6.0 - AI 문맥 번역 고도화</title>
+    
+    <!-- 📱 PWA 설정 - 모바일 최적화 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#6366f1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="GPT 번역기">
+    
     <link rel="stylesheet" href="css/styles.css">
     <!-- 성능 최적화: CSS 외부 파일로 분리하여 캐싱 가능 -->
+    
+    <!-- 🔒 중복 탭 방지 스크립트 -->
+    <script>
+    (function() {
+        const TAB_ID = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        const CHANNEL_NAME = 'gpt-translator-tab-channel';
+        
+        // BroadcastChannel로 탭 간 통신
+        if (typeof BroadcastChannel !== 'undefined') {
+            const channel = new BroadcastChannel(CHANNEL_NAME);
+            
+            // 새 탭 알림
+            channel.postMessage({ type: 'NEW_TAB', tabId: TAB_ID });
+            
+            // 기존 탭에서 응답 수신
+            channel.onmessage = function(event) {
+                if (event.data.type === 'TAB_EXISTS' && event.data.tabId !== TAB_ID) {
+                    // 기존 탭이 있으면 현재 탭 닫기 유도
+                    if (confirm('⚠️ 이미 다른 탭에서 번역기가 실행 중입니다.\n\n기존 탭으로 이동하시겠습니까?\n(확인: 이 탭 닫기, 취소: 계속 사용)')) {
+                        window.close();
+                        // 닫기 실패 시 안내
+                        setTimeout(function() {
+                            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a2e;color:white;text-align:center;padding:20px;"><div><h2>⚠️ 중복 탭 감지</h2><p>다른 탭에서 이미 번역기가 실행 중입니다.<br>해당 탭으로 이동해주세요.</p><button onclick="location.reload()" style="margin-top:20px;padding:10px 20px;background:#6366f1;color:white;border:none;border-radius:8px;cursor:pointer;">여기서 계속 사용</button></div></div>';
+                        }, 100);
+                    }
+                }
+                if (event.data.type === 'NEW_TAB' && event.data.tabId !== TAB_ID) {
+                    // 새 탭에게 이미 탭이 있음을 알림
+                    channel.postMessage({ type: 'TAB_EXISTS', tabId: TAB_ID });
+                }
+            };
+            
+            // 탭 닫힐 때 알림
+            window.addEventListener('beforeunload', function() {
+                channel.postMessage({ type: 'TAB_CLOSED', tabId: TAB_ID });
+            });
+        }
+        
+        // 오디오 컨텍스트 중복 방지를 위한 전역 플래그
+        window.GPT_TRANSLATOR_TAB_ID = TAB_ID;
+    })();
+    </script>
 </head>
 
 <body>
@@ -50,6 +100,34 @@
                 <div class="ai-settings-section" id="aiSettingsSection">
                     <div class="ai-settings-title">🧠 AI 문맥 번역 고도화</div>
 
+                    <!-- 🤖 AI 모델 선택 (하이브리드 모드) -->
+                    <div class="setting-item">
+                        <label class="setting-label">🤖 AI 모델 선택<small>자동: 텍스트 길이에 따라 최적 모델 선택</small></label>
+                        <div class="setting-control">
+                            <select id="aiModelSelect" onchange="updateAIModelSelection()">
+                                <option value="auto">🔄 자동 최적화 (추천)</option>
+                                <option value="gpt-4.1">🟢 GPT-4.1 (고품질)</option>
+                                <option value="gpt-4.1-mini">🟢 GPT-4.1 Mini (빠름)</option>
+                                <option value="gemini-2.0-flash">🔵 Gemini 2.0 Flash (빠름/저렴)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="model-indicator" id="modelIndicator"
+                        style="font-size: 11px; color: var(--text-secondary); padding: 5px 0; text-align: center;">
+                        현재 모드: <strong>자동 최적화</strong> - 텍스트 길이에 따라 최적 모델 선택
+                    </div>
+
+                    <!-- 🏭 전문 분야 선택 -->
+                    <div class="setting-item">
+                        <label class="setting-label">🏭 전문 분야<small>제조 자동화: 전문 용어 자동 적용</small></label>
+                        <div class="setting-control">
+                            <select id="domainSelect" onchange="updateDomainSelection()">
+                                <option value="general">📝 일반</option>
+                                <option value="manufacturing">🏭 제조 자동화</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <div class="setting-item quality-setting-wrapper">
                         <div class="quality-setting-grid">
                             <label class="setting-label">번역 품질 vs 속도<small>높을수록 정확하지만 느림</small></label>
@@ -63,7 +141,7 @@
                         </div>
                         <!-- 옵션 1: 실시간 모델 정보 표시 -->
                         <div class="model-info-display" id="modelInfoDisplay">
-                            <span class="model-name">모델: gpt-4o</span>
+                            <span class="model-name">모델: gpt-4.1</span>
                             <span class="model-cost">비용: 중간</span>
                             <span class="model-tokens">토큰: 1500</span>
                         </div>
@@ -107,8 +185,7 @@
                         <label class="setting-label" for="autoThreshold">자동 모드 임계값<small>이 글자 수 이하는 Google TTS
                                 사용</small></label>
                         <div class="setting-control"><input type="range" id="autoThreshold" min="10" max="200"
-                                value="50" step="10"><span class="setting-value" id="thresholdValue">50자</span>
-                        </div>
+                                value="50" step="10"><span class="setting-value" id="thresholdValue">50자</span></div>
                     </div>
                     <div class="setting-item">
                         <label class="setting-label" for="voiceSelect">음성 선택 (OpenAI)</label>
@@ -195,8 +272,8 @@
                     </div>
                 </div>
                 <div class="controls">
-                    <button class="btn-translate" id="translateBtn" onclick="handleTranslate()"><span>📝</span>
-                        <span id="translateBtnText">번역하기</span></button>
+                    <button class="btn-translate" id="translateBtn" onclick="handleTranslate()"><span>📝</span> <span
+                            id="translateBtnText">번역하기</span></button>
                     <button class="btn-voice" id="voiceBtn" onclick="handleVoiceTranslate()"><span>🎤</span> 음성
                         번역</button>
                     <button class="btn-clear" onclick="clearAll()"><span>🗑️</span> 모두 지우기</button>
@@ -208,8 +285,7 @@
                                 style="display: none;">캐시됨</span><span id="aiIndicator" class="engine-indicator ai"
                                 style="display: none;">AI</span></span>
                         <div class="result-actions">
-                            <button class="btn-action" onclick="copyTranslation()" id="copyBtn" disabled>📋
-                                복사</button>
+                            <button class="btn-action" onclick="copyTranslation()" id="copyBtn" disabled>📋 복사</button>
                             <button class="btn-action" id="speakBtn" onclick="handleSpeak()" disabled>🔊 듣기<span
                                     id="engineIndicator" class="engine-indicator"
                                     style="display: none;"></span></button>
@@ -3234,7 +3310,9 @@
                         getPronunciation: isPronunciationEnabled,
                         useAIContext: true,
                         contextualPrompt: contextualPrompt,
-                        qualityLevel: qualityLevel
+                        qualityLevel: qualityLevel,
+                        model: getOptimalModel(inputText), // 🤖 AI 모델 선택
+                        domain: selectedDomain // 🏭 전문 분야
                     };
                 } else {
                     // 일반 번역 요청
@@ -3242,7 +3320,9 @@
                         action: "translate",
                         inputText: inputText,
                         targetLang: targetLang,
-                        getPronunciation: isPronunciationEnabled
+                        getPronunciation: isPronunciationEnabled,
+                        model: getOptimalModel(inputText), // 🤖 AI 모델 선택
+                        domain: selectedDomain // 🏭 전문 분야
                     };
                 }
 
@@ -3255,7 +3335,17 @@
                 const result = await response.json();
                 if (result.error) throw new Error(result.error);
 
+                // 📝 피드백 학습용 번역 정보 저장
+                lastOriginalText = inputText;
+                lastOriginalTranslation = result.translation;
+                lastTargetLang = targetLang;
+
                 displayTranslation(result.translation, result.pronunciation_hangul, inputText, false);
+
+                // 📝 피드백 적용 표시
+                if (result.feedbackApplied) {
+                    showStatus(`📝 사용자 피드백 적용됨 (${result.feedbackMatchType === 'exact' ? '정확 일치' : '유사 일치'})`, 'success');
+                }
 
                 // 번역 컨텍스트에 추가 (AI 모드일 때만)
                 if (aiContextMode) {
@@ -3337,22 +3427,144 @@
 
         // 기존 함수들 (기본 번역기 기능)
 
+        // 🤖 AI 모델 선택 상태 변수
+        let selectedAIModel = localStorage.getItem('selectedAIModel') || 'auto';
+
+        // 🏭 전문 분야 선택 상태 변수
+        let selectedDomain = localStorage.getItem('selectedDomain') || 'general';
+
+        // 🏭 전문 분야 선택 업데이트 함수
+        function updateDomainSelection() {
+            const select = document.getElementById('domainSelect');
+            if (!select) return;
+
+            selectedDomain = select.value;
+            localStorage.setItem('selectedDomain', selectedDomain);
+
+            console.log('[Domain] 선택된 분야:', selectedDomain);
+
+            if (selectedDomain === 'manufacturing') {
+                showStatus('🏭 제조 자동화 모드 활성화 - 전문 용어 자동 적용', 'success');
+            }
+        }
+
+        // 📝 번역 피드백 학습 변수
+        let lastOriginalText = '';
+        let lastOriginalTranslation = '';
+        let lastTargetLang = '';
+
+        // 📝 번역 피드백 저장 함수
+        async function saveTranslationFeedback(correctedTranslation) {
+            if (!currentUser || !lastOriginalText) {
+                showStatus('❌ 피드백 저장: 로그인이 필요합니다.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    },
+                    body: JSON.stringify({
+                        action: 'save-feedback',
+                        originalText: lastOriginalText,
+                        originalTranslation: lastOriginalTranslation,
+                        correctedTranslation: correctedTranslation,
+                        feedbackTargetLang: lastTargetLang
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showStatus('✅ 피드백 저장 완료! 다음에 동일한 문장 번역 시 적용됩니다.', 'success');
+                } else {
+                    showStatus('❌ 피드백 저장 실패: ' + result.error, 'error');
+                }
+            } catch (error) {
+                console.error('[Feedback] 저장 오류:', error);
+                showStatus('❌ 피드백 저장 중 오류 발생', 'error');
+            }
+        }
+
+        // 📝 번역 수정 모달 표시
+        function showEditTranslationModal() {
+            if (!lastOriginalTranslation) {
+                showStatus('수정할 번역이 없습니다.', 'error');
+                return;
+            }
+
+            const corrected = prompt('📝 번역 수정:\n\n원문: ' + lastOriginalText + '\n\n현재 번역을 수정해주세요:', lastOriginalTranslation);
+
+            if (corrected && corrected !== lastOriginalTranslation) {
+                saveTranslationFeedback(corrected);
+
+                // UI에 수정된 번역 즉시 반영
+                const outputEl = document.getElementById('outputText');
+                if (outputEl) {
+                    outputEl.innerText = corrected;
+                }
+            }
+        }
+
+        // 🤖 AI 모델 선택 업데이트 함수
+        function updateAIModelSelection() {
+            const select = document.getElementById('aiModelSelect');
+            if (!select) return;
+
+            selectedAIModel = select.value;
+            localStorage.setItem('selectedAIModel', selectedAIModel);
+
+            const indicator = document.getElementById('modelIndicator');
+            const modelDescriptions = {
+                'auto': '🔄 <strong>자동 최적화</strong> - 텍스트 길이에 따라 최적 모델 선택',
+                'gpt-4.1': '🟢 <strong>GPT-4.1</strong> - 최고 품질의 번역 (비용 높음)',
+                'gpt-4.1-mini': '🟢 <strong>GPT-4.1 Mini</strong> - 빠른 번역 속도 (품질 양호)',
+                'gemini-2.0-flash': '🔵 <strong>Gemini 2.0 Flash</strong> - 매우 빠름, 비용 저렴'
+            };
+
+            if (indicator) {
+                indicator.innerHTML = `현재 모드: ${modelDescriptions[selectedAIModel] || modelDescriptions['auto']}`;
+            }
+
+            console.log('[AI Model] 선택된 모델:', selectedAIModel);
+        }
+
+        // 🤖 텍스트 길이에 따른 자동 모델 선택 (하이브리드 모드)
+        function getOptimalModel(text) {
+            if (selectedAIModel !== 'auto') {
+                return selectedAIModel;
+            }
+
+            const charCount = text.length;
+            // 자동 모드: 짧은 텍스트 → Gemini (빠름), 긴 텍스트 → GPT (정확)
+            if (charCount < 100) {
+                return 'gemini-2.0-flash';
+            } else if (charCount < 500) {
+                return 'gpt-4.1-mini';
+            } else {
+                return 'gpt-4.1';
+            }
+        }
+
         // 옵션 1: 품질 슬라이더의 모델 정보를 실시간으로 업데이트하는 함수
         function updateModelInfo(level) {
             const modelConfig = {
-                1: { model: 'gpt-4o-mini', cost: '매우 낮음', tokens: '1000' },
-                2: { model: 'gpt-4o-mini', cost: '낮음', tokens: '1200' },
-                3: { model: 'gpt-4o', cost: '중간', tokens: '1500' },
-                4: { model: 'gpt-4o', cost: '높음', tokens: '2000' },
-                5: { model: 'gpt-4o', cost: '매우 높음', tokens: '2500' }
+                1: { model: 'gemini-2.0-flash', cost: '매우 낮음', tokens: '1000', provider: 'Google' },
+                2: { model: 'gpt-4.1-mini', cost: '낮음', tokens: '1200', provider: 'OpenAI' },
+                3: { model: 'gpt-4.1', cost: '중간', tokens: '1500', provider: 'OpenAI' },
+                4: { model: 'gpt-4.1', cost: '높음', tokens: '2000', provider: 'OpenAI' },
+                5: { model: 'gpt-4.1', cost: '매우 높음', tokens: '2500', provider: 'OpenAI' }
             };
 
             const config = modelConfig[level];
             const modelInfoDisplay = document.getElementById('modelInfoDisplay');
 
             if (modelInfoDisplay && config) {
+                const providerIcon = config.provider === 'Google' ? '🔵' : '🟢';
                 modelInfoDisplay.innerHTML = `
-            <span class="model-name">모델: ${config.model}</span>
+            <span class="model-name">${providerIcon} ${config.model}</span>
             <span class="model-cost">비용: ${config.cost}</span>
             <span class="model-tokens">토큰: ${config.tokens}</span>
         `;
@@ -3552,6 +3764,21 @@
                 displayStats();
                 // 🔧 인증 시스템 초기화
                 initAuthSystem();
+
+                // 🤖 AI 모델 선택 초기화
+                const savedModel = localStorage.getItem('selectedAIModel') || 'auto';
+                const aiModelSelect = document.getElementById('aiModelSelect');
+                if (aiModelSelect) {
+                    aiModelSelect.value = savedModel;
+                    updateAIModelSelection();
+                }
+
+                // 🏭 전문 분야 선택 초기화
+                const savedDomain = localStorage.getItem('selectedDomain') || 'general';
+                const domainSelect = document.getElementById('domainSelect');
+                if (domainSelect) {
+                    domainSelect.value = savedDomain;
+                }
 
                 // 🔧 UI 상태 초기 설정
                 updateAuthUI(!!currentUser);
