@@ -1,0 +1,3 @@
+[submodule "gpt-translator-frontend"]
+	path = gpt-translator-frontend
+	url = https://github.com/mind79ns/gpt-translator-frontend.git
