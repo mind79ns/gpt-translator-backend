@@ -29,7 +29,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''; // 🔵 Gemini API 키
 const MAX_INPUT_CHARS = 6000;
 const TRANSLATION_CACHE_TTL_MS = 1000 * 60 * 60;
 
-// 🔵 Gemini 2.0 Flash 번역 함수
+// 🔵 Gemini 1.5 Flash 번역 함수 (안정성 및 속도 최적화)
 async function translateWithGemini(text, sourceLang, targetLang, getPronunciation = false, apiKey = GEMINI_API_KEY) {
   if (!apiKey) {
     throw new Error('Gemini API key not configured');
@@ -43,8 +43,9 @@ Text to translate: "${text}"`
 
 Text to translate: "${text}"`;
 
+  // 📝 모델 버전: gemini-1.5-flash (안정적, 빠름)
   const response = await fetchFn(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -228,13 +229,13 @@ async function translateWithAIContext(inputText, targetLang, contextualPrompt, q
 
   const sourceLanguage = detectSourceLanguage(inputText);
 
-  // 품질 레벨에 따른 모델 및 설정 선택 (2025년 최신 모델)
+  // 품질 레벨에 따른 모델 및 설정 선택 (2025년 최신 모델 - GPT-4o)
   const qualityConfig = {
-    1: { model: "gpt-4.1-mini", temperature: 0.3, maxTokens: 1000 },
-    2: { model: "gpt-4.1-mini", temperature: 0.1, maxTokens: 1200 },
-    3: { model: "gpt-4.1", temperature: 0.0, maxTokens: 1500 },
-    4: { model: "gpt-4.1", temperature: 0.0, maxTokens: 2000 },
-    5: { model: "gpt-4.1", temperature: 0.0, maxTokens: 2500 }
+    1: { model: "gpt-4o-mini", temperature: 0.3, maxTokens: 1000 },
+    2: { model: "gpt-4o-mini", temperature: 0.1, maxTokens: 1200 },
+    3: { model: "gpt-4o", temperature: 0.0, maxTokens: 1500 },
+    4: { model: "gpt-4o", temperature: 0.0, maxTokens: 2000 },
+    5: { model: "gpt-4o", temperature: 0.0, maxTokens: 2500 }
   };
 
   const config = qualityConfig[qualityLevel] || qualityConfig[3];
@@ -380,9 +381,9 @@ Rules:
 
   const userPrompt = `Text: """${inputText}"""`;
 
-  // 💰 비용 최적화: gpt-4.1-mini 사용 (2025년 최신 모델)
+  // 💰 비용 최적화: gpt-4o-mini 사용 (2025년 최신 모델)
   const payload = {
-    model: "gpt-4.1-mini",
+    model: "gpt-4o-mini",
     messages: [
       { role: "system", content: systemMessage },
       { role: "user", content: userPrompt }
@@ -690,10 +691,16 @@ exports.handler = async function (event, context) {
       contextualPrompt = null,
       qualityLevel = 3,
       // 🤖 AI 모델 선택 파라미터
-      model = 'auto', // auto, gpt-4.1, gpt-4.1-mini, gemini-2.0-flash
+      model = 'auto', // auto, gpt-4o, gpt-4o-mini, gemini-1.5-flash
       // 🏭 전문 분야 모드
       domain = 'general' // general, manufacturing
     } = JSON.parse(event.body || '{}');
+
+    // Legacy mapping (구버전 파라미터 호환)
+    let requestedModel = model;
+    if (requestedModel === 'gpt-4.1') requestedModel = 'gpt-4o';
+    if (requestedModel === 'gpt-4.1-mini') requestedModel = 'gpt-4o-mini';
+    if (requestedModel === 'gemini-2.0-flash') requestedModel = 'gemini-1.5-flash';
 
     if (!OPENAI_API_KEY) {
       throw new Error("서버 설정 오류: OPENAI_API_KEY가 없습니다.");
@@ -752,7 +759,7 @@ exports.handler = async function (event, context) {
       console.log(`[Translation] ${isUserKey ? '사용자' : '시스템'} API 키 사용, 모드: ${useAIContext ? 'AI' : '일반'}`);
 
       let result;
-      let usedModel = model;
+      let usedModel = requestedModel;
       let modelProvider = 'openai';
 
       // 📝 피드백 학습: 저장된 수정 사항 확인
@@ -781,34 +788,35 @@ exports.handler = async function (event, context) {
 
       try {
         // 🤖 모델 자동 선택 (하이브리드 모드)
-        if (model === 'auto') {
+        if (requestedModel === 'auto') {
           const charCount = inputText.length;
           if (charCount < 100 && GEMINI_API_KEY) {
-            usedModel = 'gemini-2.0-flash';
+            usedModel = 'gemini-1.5-flash';
           } else if (charCount < 500) {
-            usedModel = 'gpt-4.1-mini';
+            usedModel = 'gpt-4o-mini';
           } else {
-            usedModel = 'gpt-4.1';
+            usedModel = 'gpt-4o';
           }
           console.log(`[Model] 자동 선택: ${usedModel} (텍스트 길이: ${charCount}자)`);
         }
 
         // 🔵 Gemini 모델 사용
-        if (usedModel === 'gemini-2.0-flash') {
+        if (usedModel === 'gemini-1.5-flash' || usedModel === 'gemini-2.0-flash-001' || usedModel === 'gemini-2.0-flash') {
           modelProvider = 'google';
           const geminiApiKey = userApiKeys?.google || GEMINI_API_KEY;
 
           if (!geminiApiKey) {
             console.log('[Model] Gemini API 키 없음, GPT로 대체');
-            usedModel = 'gpt-4.1-mini';
+            usedModel = 'gpt-4o-mini';
+            modelProvider = 'openai';
           } else {
             try {
-              console.log('[Translation] Gemini 2.0 Flash 번역 모드');
+              console.log('[Translation] Gemini 번역 모드:', usedModel);
               const sourceLanguage = detectSourceLanguage(inputText);
               result = await translateWithGemini(inputText, sourceLanguage, targetLang, getPronunciation, geminiApiKey);
             } catch (geminiError) {
               console.log('[Model] Gemini 오류, GPT로 대체:', geminiError.message);
-              usedModel = 'gpt-4.1-mini';
+              usedModel = 'gpt-4o-mini';
               modelProvider = 'openai';
               result = null; // GPT 폴백 트리거
             }
