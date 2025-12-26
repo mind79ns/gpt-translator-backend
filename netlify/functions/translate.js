@@ -28,6 +28,39 @@ const GOOGLE_TTS_API_KEY = process.env.GOOGLE_TTS_API_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''; // 🔵 Gemini API 키
 const MAX_INPUT_CHARS = 6000;
 const TRANSLATION_CACHE_TTL_MS = 1000 * 60 * 60;
+const GEMINI_TIMEOUT_MS = 5000; // 5초 타임아웃
+
+// 🚀 최적화: 동적 max_tokens 계산 (입력 길이 기반)
+function calculateMaxTokens(inputLength) {
+  // 대략적으로 한글 1글자 = 2-3토큰, 영어 1단어 = 1-2토큰
+  // 번역 결과는 입력의 1.5~2배 정도로 예상
+  const estimatedTokens = Math.ceil(inputLength * 3);
+  // 최소 500, 최대 2500 토큰
+  return Math.min(Math.max(estimatedTokens, 500), 2500);
+}
+
+// 🚀 최적화: 타임아웃 래퍼 함수
+async function withTimeout(promise, ms, fallbackFn = null) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`요청 시간 초과 (${ms}ms)`));
+    }, ms);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (fallbackFn && error.message.includes('시간 초과')) {
+      console.log('[Timeout] 타임아웃 발생, 폴백 실행');
+      return await fallbackFn();
+    }
+    throw error;
+  }
+}
 
 // 🔵 Gemini 1.5 Flash 번역 함수 (안정성 및 속도 최적화)
 async function translateWithGemini(text, sourceLang, targetLang, getPronunciation = false, apiKey = GEMINI_API_KEY) {
@@ -279,6 +312,10 @@ Core Translation Rules:
   // contextualPrompt를 사용자 메시지로 활용
   const userPrompt = contextualPrompt || `Translate this ${sourceLanguage} text to ${targetLang}: """${inputText}"""`;
 
+  // 🚀 최적화: 동적 max_tokens 계산
+  const dynamicMaxTokens = calculateMaxTokens(inputText.length);
+  const finalMaxTokens = Math.min(config.maxTokens, dynamicMaxTokens);
+
   const payload = {
     model: config.model,
     messages: [
@@ -286,10 +323,12 @@ Core Translation Rules:
       { role: "user", content: userPrompt }
     ],
     temperature: config.temperature,
-    max_tokens: config.maxTokens
+    max_tokens: finalMaxTokens,
+    // 🚀 최적화: JSON 모드 강제 (파싱 오류 제거)
+    response_format: { type: "json_object" }
   };
 
-  console.log('[AI Translation] 사용 모델:', config.model, '품질 레벨:', qualityLevel);
+  console.log('[AI Translation] 사용 모델:', config.model, '품질 레벨:', qualityLevel, '동적 토큰:', finalMaxTokens);
 
   const parsed = await retryWithBackoff(async () => {
     const resp = await fetchFn("https://api.openai.com/v1/chat/completions", {
@@ -381,6 +420,9 @@ Rules:
 
   const userPrompt = `Text: """${inputText}"""`;
 
+  // 🚀 최적화: 동적 max_tokens 계산
+  const dynamicMaxTokens = calculateMaxTokens(inputText.length);
+
   // 💰 비용 최적화: gpt-4o-mini 사용 (2025년 최신 모델)
   const payload = {
     model: "gpt-4o-mini",
@@ -389,7 +431,9 @@ Rules:
       { role: "user", content: userPrompt }
     ],
     temperature: 0.0,
-    max_tokens: 1500
+    max_tokens: dynamicMaxTokens,
+    // 🚀 최적화: JSON 모드 강제 (파싱 오류 제거)
+    response_format: { type: "json_object" }
   };
 
   const parsed = await retryWithBackoff(async () => {
@@ -800,7 +844,7 @@ exports.handler = async function (event, context) {
           console.log(`[Model] 자동 선택: ${usedModel} (텍스트 길이: ${charCount}자)`);
         }
 
-        // 🔵 Gemini 모델 사용
+        // 🔵 Gemini 모델 사용 (타임아웃 적용)
         if (usedModel === 'gemini-1.5-flash' || usedModel === 'gemini-2.0-flash-001' || usedModel === 'gemini-2.0-flash') {
           modelProvider = 'google';
           const geminiApiKey = userApiKeys?.google || GEMINI_API_KEY;
@@ -813,7 +857,18 @@ exports.handler = async function (event, context) {
             try {
               console.log('[Translation] Gemini 번역 모드:', usedModel);
               const sourceLanguage = detectSourceLanguage(inputText);
-              result = await translateWithGemini(inputText, sourceLanguage, targetLang, getPronunciation, geminiApiKey);
+
+              // 🚀 최적화: 타임아웃 적용 (5초 초과 시 GPT 폴백)
+              result = await withTimeout(
+                translateWithGemini(inputText, sourceLanguage, targetLang, getPronunciation, geminiApiKey),
+                GEMINI_TIMEOUT_MS,
+                async () => {
+                  console.log('[Fallback] Gemini 타임아웃, GPT-4o-mini로 폴백');
+                  usedModel = 'gpt-4o-mini';
+                  modelProvider = 'openai';
+                  return null; // GPT 폴백 트리거
+                }
+              );
             } catch (geminiError) {
               console.log('[Model] Gemini 오류, GPT로 대체:', geminiError.message);
               usedModel = 'gpt-4o-mini';
