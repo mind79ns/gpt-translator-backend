@@ -779,6 +779,142 @@ exports.handler = async function (event, context) {
       };
     }
 
+    // 🚀 스트리밍 번역 액션 (SSE - Server-Sent Events)
+    if (action === 'translate-stream') {
+      if (!inputText || !targetLang) {
+        return {
+          statusCode: 400,
+          headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: "inputText와 targetLang이 필요합니다." })
+        };
+      }
+
+      const apiKeyToUse = userApiKeys?.openai || OPENAI_API_KEY;
+      if (!apiKeyToUse) {
+        return {
+          statusCode: 500,
+          headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: "API 키가 설정되지 않았습니다." })
+        };
+      }
+
+      console.log('[Streaming] 스트리밍 번역 시작');
+      const sourceLanguage = detectSourceLanguage(inputText);
+
+      // 동적 max_tokens 계산
+      const dynamicMaxTokens = calculateMaxTokens(inputText.length);
+
+      try {
+        const streamResponse = await fetchFn("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKeyToUse}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: `You are a professional translator. Translate from ${sourceLanguage} to ${targetLang}. Return ONLY valid JSON with two keys: "translation" (string), "pronunciation_hangul" (Korean phonetic transcription). No extra text.`
+              },
+              {
+                role: "user",
+                content: `Translate: "${inputText}"`
+              }
+            ],
+            temperature: 0.1,
+            max_tokens: dynamicMaxTokens,
+            stream: true
+          })
+        });
+
+        if (!streamResponse.ok) {
+          const errorText = await streamResponse.text();
+          throw new Error(`OpenAI API 오류: ${streamResponse.status} - ${errorText}`);
+        }
+
+        // SSE 형식으로 청크 수집 후 전송
+        const reader = streamResponse.body.getReader();
+        const decoder = new TextDecoder();
+        let fullContent = '';
+        let chunks = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n').filter(line => line.trim() !== '');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.substring(6);
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                const content = parsed.choices?.[0]?.delta?.content || '';
+                if (content) {
+                  fullContent += content;
+                  chunks.push(content);
+                }
+              } catch (e) {
+                // JSON 파싱 실패 시 무시
+              }
+            }
+          }
+        }
+
+        console.log('[Streaming] 스트리밍 완료, 총 청크:', chunks.length);
+
+        // JSON 파싱 시도
+        let result = { translation: fullContent, pronunciation_hangul: '' };
+        try {
+          const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            result = {
+              translation: parsed.translation || fullContent,
+              pronunciation_hangul: parsed.pronunciation_hangul || ''
+            };
+          }
+        } catch (e) {
+          // JSON 파싱 실패 시 원본 텍스트 사용
+          result = { translation: fullContent.replace(/[{}"]/g, '').trim(), pronunciation_hangul: '' };
+        }
+
+        // 사용량 추적
+        if (userId) {
+          const estimatedCost = (inputText.length * 0.00000015) + (result.translation.length * 0.0000006);
+          await trackUsage(userId, 'translation', 1, estimatedCost, 'openai');
+        }
+
+        return {
+          statusCode: 200,
+          headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...result,
+            chunks: chunks,
+            usedModel: 'gpt-4o-mini',
+            modelProvider: 'openai',
+            streamingUsed: true
+          })
+        };
+
+      } catch (streamError) {
+        console.error('[Streaming] 스트리밍 오류:', streamError.message);
+        return {
+          statusCode: 500,
+          headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            error: "스트리밍 번역 실패: " + streamError.message,
+            fallbackToNormal: true
+          })
+        };
+      }
+    }
+
     if (action === 'translate') {
       if (!inputText || !targetLang) {
         return {
