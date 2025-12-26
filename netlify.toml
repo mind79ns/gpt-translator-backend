@@ -1,5 +1,5 @@
 [build]
-  publish = "."
+  publish = "gpt-translator-frontend"
 
 [functions]
   directory = "netlify/functions"
